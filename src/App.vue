@@ -52,6 +52,9 @@
                 <div v-if="faction.caches.armor.quantity > 0">
                   Armor Cache: {{ faction.caches.armor.quantity }}个 ({{ formatNumber(faction.caches.armor.value) }}$)
                 </div>
+                <div v-if="faction.caches.melee.quantity > 0">
+                  Melee Cache: {{ faction.caches.melee.quantity }}个 ({{ formatNumber(faction.caches.melee.value) }}$)
+                </div>
                 <div>总计: {{ formatNumber(faction.cacheValue) }}$</div>
               </div>
               <div v-else>无</div>
