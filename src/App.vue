@@ -169,76 +169,164 @@ const handleRatioChange = (factionIndex) => {
 }
 
 const calculateSplit = () => {
-  if (!warData.value || warData.value.factions.length !== 2) return
+  if (!warData.value || warData.value.factions.length !== 2) return;
 
-  const faction1 = warData.value.factions[0]
-  const faction2 = warData.value.factions[1]
-  const totalValue = faction1.totalValue + faction2.totalValue
+  const faction1 = warData.value.factions[0];
+  const faction2 = warData.value.factions[1];
+  const totalValue = faction1.totalValue + faction2.totalValue;
 
-  // 计算目标金额
-  const targetValue1 = totalValue * (splitForm.faction1Ratio / 100)
-  const targetValue2 = totalValue * (splitForm.faction2Ratio / 100)
+  // 计算各派系目标金额
+  const targetValue1 = totalValue * (splitForm.faction1Ratio / 100);
+  const targetValue2 = totalValue * (splitForm.faction2Ratio / 100);
 
-  // 计算当前比例
-  const currentRatio1 = (faction1.totalValue / totalValue) * 100
+  // 当前 faction1 的比例
+  const currentRatio1 = (faction1.totalValue / totalValue) * 100;
 
-  splitResult.value = {
-    transfers: []
+  splitResult.value = { transfers: [] };
+
+  // 如果当前比例已经符合目标比例，则无需转移
+  if (Math.abs(currentRatio1 - splitForm.faction1Ratio) < 0.1) return;
+
+  // 确定转移方向：当 faction1 的价值超过目标时，从 faction1 转给 faction2，反之亦然
+  let fromFaction, toFaction, targetValue;
+  if (currentRatio1 > splitForm.faction1Ratio) {
+    fromFaction = faction1;
+    toFaction = faction2;
+    targetValue = targetValue1; // fromFaction 需要降低到 targetValue
+  } else {
+    fromFaction = faction2;
+    toFaction = faction1;
+    targetValue = targetValue2;
   }
 
-  // 如果当前比例已经符合目标比例，无需转移
-  if (Math.abs(currentRatio1 - splitForm.faction1Ratio) < 0.1) return
-
-  // 确定需要转移的方向
-  const [fromFaction, toFaction, transferAmount] = currentRatio1 > splitForm.faction1Ratio
-    ? [faction1, faction2, faction1.totalValue - targetValue1]
-    : [faction2, faction1, faction2.totalValue - targetValue2]
-
-  const transfer = {
-    from: fromFaction.name,
-    to: toFaction.name,
-    caches: [],
-    cash: 0
-  }
-
-  let remainingAmount = transferAmount
-
-  // 优先使用缓存转移
+  // 定义 caches 顺序及名称（这里顺序可以根据需要调整）
   const cacheTypes = [
     { type: 'heavy', name: 'Heavy Arms Cache' },
     { type: 'medium', name: 'Medium Arms Cache' },
     { type: 'small', name: 'Small Arms Cache' },
     { type: 'armor', name: 'Armor Cache' },
     { type: 'melee', name: 'Melee Cache' }
-  ]
+  ];
 
-  for (const cacheType of cacheTypes) {
-    const cache = fromFaction.caches[cacheType.type]
-    if (cache.quantity > 0 && remainingAmount > 0) {
-      const cacheValue = cache.value / cache.quantity
-      const maxCaches = Math.min(
-        cache.quantity,
-        Math.floor(remainingAmount / cacheValue)
-      )
+  // 构建 caches 数组，每项包含：type、name、可转移数量（available）和单价（unitValue）
+  // 假设 fromFaction.caches 对应的格式为：{ heavy: { quantity, value }, ... }
+  const caches = cacheTypes.map(cacheType => {
+    const data = fromFaction.caches[cacheType.type];
+    // 计算单个 cache 的价值（假设 data.value 是该类型 cache 的总价值）
+    const unitValue = data.quantity > 0 ? (data.value / data.quantity) : 0;
+    return {
+      type: cacheType.type,
+      name: cacheType.name,
+      available: data.quantity,
+      unitValue: unitValue
+    };
+  });
 
-      if (maxCaches > 0) {
-        transfer.caches.push({
-          type: cacheType.type,
-          name: cacheType.name,
-          quantity: maxCaches
-        })
-        remainingAmount -= maxCaches * cacheValue
+  // fromTotal 为转出派系初始的 caches 总价值
+  const fromTotal = fromFaction.totalValue;
+  const n = caches.length;
+
+  // memo 用于保存状态搜索结果，key 为状态数组（用逗号连接）的字符串
+  const memo = new Map();
+
+  /**
+   * dp(state)
+   * @param {number[]} state - 长度为 n 的数组，表示每种 cache 已转移的数量
+   * @returns {object} { cash, state } 其中 cash 为剩余需要用现金补偿的金额
+   */
+  const dp = (state) => {
+    const stateKey = state.join(',');
+    if (memo.has(stateKey)) return memo.get(stateKey);
+
+    // 计算已转移 caches 的总价值
+    let transferredValue = 0;
+    for (let i = 0; i < n; i++) {
+      transferredValue += state[i] * caches[i].unitValue;
+    }
+    // 当前 fromFaction 剩余价值
+    const currentValue = fromTotal - transferredValue;
+    // diff 为超出目标值的部分
+    const diff = currentValue - targetValue;
+
+    // 如果已经达到或低于目标（误差范围内），则现金补偿为 0
+    if (diff <= 1e-6) {
+      const res = { cash: 0, state: state };
+      memo.set(stateKey, res);
+      return res;
+    }
+
+    // 找出还有剩余可转移的 cache 类型
+    let availableIndices = [];
+    for (let i = 0; i < n; i++) {
+      if (state[i] < caches[i].available) {
+        availableIndices.push(i);
       }
     }
-  }
+    // 若无可转移 cache，则只能用现金补齐剩余差额
+    if (availableIndices.length === 0) {
+      const res = { cash: diff, state: state };
+      memo.set(stateKey, res);
+      return res;
+    }
 
-  // 剩余金额用现金补齐
-  if (remainingAmount > 0) {
-    transfer.cash = Math.ceil(remainingAmount)
-  }
+    // 如果剩余 diff 小于所有可转移 cache 中最小的单价，则再转移一件会“过补”，此时直接用现金结算
+    let minAvailable = Infinity;
+    for (const i of availableIndices) {
+      if (caches[i].unitValue < minAvailable) {
+        minAvailable = caches[i].unitValue;
+      }
+    }
+    if (diff < minAvailable) {
+      const res = { cash: diff, state: state };
+      memo.set(stateKey, res);
+      return res;
+    }
 
-  splitResult.value.transfers.push(transfer)
-}
+    // 尝试对每个可转移类型增加一件 cache，然后递归求解，选取现金补偿最小的方案
+    let best = { cash: Infinity, state: null };
+    for (const i of availableIndices) {
+      if (diff >= caches[i].unitValue) {
+        let newState = state.slice();
+        newState[i] += 1;
+        const candidate = dp(newState);
+        if (candidate.cash < best.cash) {
+          best = { cash: candidate.cash, state: candidate.state };
+        }
+      }
+    }
+    memo.set(stateKey, best);
+    return best;
+  };
+
+  // 初始状态：各类型 cache 均未转移
+  const initState = Array(n).fill(0);
+  const optimal = dp(initState);
+
+  // 构造转移结果对象
+  const transfer = {
+    from: fromFaction.name,
+    to: toFaction.name,
+    caches: [],
+    cash: 0
+  };
+
+  // 若某种 cache 有转移，则加入结果中
+  for (let i = 0; i < n; i++) {
+    if (optimal.state[i] > 0) {
+      transfer.caches.push({
+        type: caches[i].type,
+        name: caches[i].name,
+        quantity: optimal.state[i]
+      });
+    }
+  }
+  // dp 返回的 cash 为补差金额，按需要取整（这里用 Math.ceil，可根据业务需求调整）
+  transfer.cash = Math.ceil(optimal.cash);
+
+  splitResult.value.transfers.push(transfer);
+};
+
+
 
 const analyzeWar = async () => {
   if (!form.apiKey || !form.warId) {
