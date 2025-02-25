@@ -67,6 +67,54 @@
       </div>
     </el-card>
 
+    <el-card v-if="warData && warData.factions.length === 2" class="reward-split-card">
+      <template #header>
+        <div class="card-header">
+          <h3>奖励划分</h3>
+        </div>
+      </template>
+      
+      <el-form :model="splitForm" label-width="120px">
+        <el-form-item :label="warData.factions[0].name + ' 比例'">
+          <el-input-number 
+            v-model="splitForm.faction1Ratio" 
+            :min="0" 
+            :max="100" 
+            @change="handleRatioChange(0)"
+          />
+        </el-form-item>
+        <el-form-item :label="warData.factions[1].name + ' 比例'">
+          <el-input-number 
+            v-model="splitForm.faction2Ratio" 
+            :min="0" 
+            :max="100" 
+            @change="handleRatioChange(1)"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="calculateSplit" :disabled="!isValidRatio">划分奖励</el-button>
+        </el-form-item>
+      </el-form>
+
+      <div v-if="splitResult" class="split-result">
+        <h4>划分结果</h4>
+        <div v-if="splitResult.transfers.length > 0">
+          <div v-for="(transfer, index) in splitResult.transfers" :key="index" class="transfer-item">
+            <p>{{ transfer.from }} 需要转移给 {{ transfer.to }}:</p>
+            <template v-if="transfer.caches">
+              <div v-for="cache in transfer.caches" :key="cache.type">
+                {{ cache.name }}: {{ cache.quantity }}个
+              </div>
+            </template>
+            <div v-if="transfer.cash > 0">现金: {{ formatNumber(transfer.cash) }}$</div>
+          </div>
+        </div>
+        <div v-else>
+          <p>当前奖励分配已经符合目标比例，无需转移</p>
+        </div>
+      </div>
+    </el-card>
+
     <el-card v-if="error" class="error-card">
       <template #header>
         <div class="card-header">
@@ -79,7 +127,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import axios from 'axios'
 
 const form = reactive({
@@ -87,9 +135,19 @@ const form = reactive({
   warId: ''
 })
 
+const splitForm = reactive({
+  faction1Ratio: 50,
+  faction2Ratio: 50
+})
+
 const loading = ref(false)
 const error = ref(null)
 const warData = ref(null)
+const splitResult = ref(null)
+
+const isValidRatio = computed(() => {
+  return splitForm.faction1Ratio + splitForm.faction2Ratio === 100
+})
 
 const formatDate = (timestamp) => {
   return new Date(timestamp * 1000).toLocaleString()
@@ -97,6 +155,86 @@ const formatDate = (timestamp) => {
 
 const formatNumber = (num) => {
   return new Intl.NumberFormat().format(num)
+}
+
+const handleRatioChange = (factionIndex) => {
+  if (factionIndex === 0) {
+    splitForm.faction2Ratio = 100 - splitForm.faction1Ratio
+  } else {
+    splitForm.faction1Ratio = 100 - splitForm.faction2Ratio
+  }
+}
+
+const calculateSplit = () => {
+  if (!warData.value || warData.value.factions.length !== 2) return
+
+  const faction1 = warData.value.factions[0]
+  const faction2 = warData.value.factions[1]
+  const totalValue = faction1.totalValue + faction2.totalValue
+
+  // 计算目标金额
+  const targetValue1 = totalValue * (splitForm.faction1Ratio / 100)
+  const targetValue2 = totalValue * (splitForm.faction2Ratio / 100)
+
+  // 计算当前比例
+  const currentRatio1 = (faction1.totalValue / totalValue) * 100
+
+  splitResult.value = {
+    transfers: []
+  }
+
+  // 如果当前比例已经符合目标比例，无需转移
+  if (Math.abs(currentRatio1 - splitForm.faction1Ratio) < 0.1) return
+
+  // 确定需要转移的方向
+  const [fromFaction, toFaction, transferAmount] = currentRatio1 > splitForm.faction1Ratio
+    ? [faction1, faction2, faction1.totalValue - targetValue1]
+    : [faction2, faction1, faction2.totalValue - targetValue2]
+
+  const transfer = {
+    from: fromFaction.name,
+    to: toFaction.name,
+    caches: [],
+    cash: 0
+  }
+
+  let remainingAmount = transferAmount
+
+  // 优先使用缓存转移
+  const cacheTypes = [
+    { type: 'heavy', name: 'Heavy Arms Cache' },
+    { type: 'medium', name: 'Medium Arms Cache' },
+    { type: 'small', name: 'Small Arms Cache' },
+    { type: 'armor', name: 'Armor Cache' },
+    { type: 'melee', name: 'Melee Cache' }
+  ]
+
+  for (const cacheType of cacheTypes) {
+    const cache = fromFaction.caches[cacheType.type]
+    if (cache.quantity > 0 && remainingAmount > 0) {
+      const cacheValue = cache.value / cache.quantity
+      const maxCaches = Math.min(
+        cache.quantity,
+        Math.floor(remainingAmount / cacheValue)
+      )
+
+      if (maxCaches > 0) {
+        transfer.caches.push({
+          type: cacheType.type,
+          name: cacheType.name,
+          quantity: maxCaches
+        })
+        remainingAmount -= maxCaches * cacheValue
+      }
+    }
+  }
+
+  // 剩余金额用现金补齐
+  if (remainingAmount > 0) {
+    transfer.cash = Math.ceil(remainingAmount)
+  }
+
+  splitResult.value.transfers.push(transfer)
 }
 
 const analyzeWar = async () => {
@@ -108,6 +246,7 @@ const analyzeWar = async () => {
   loading.value = true
   error.value = null
   warData.value = null
+  splitResult.value = null
 
   try {
     // 获取RW信息
@@ -203,7 +342,8 @@ const analyzeWar = async () => {
 
 .input-card,
 .result-card,
-.error-card {
+.error-card,
+.reward-split-card {
   margin-bottom: 20px;
 }
 
