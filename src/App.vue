@@ -26,14 +26,36 @@
           <h3>战争分析结果</h3>
         </div>
       </template>
-      
       <div class="war-info">
         <h4>基本信息</h4>
         <el-descriptions :column="2" border>
           <el-descriptions-item label="战争状态">{{ warData.status }}</el-descriptions-item>
           <el-descriptions-item label="开始时间">{{ formatDate(warData.start) }}</el-descriptions-item>
         </el-descriptions>
-
+        
+        <div class="price-settings">
+          <h4>价格设置</h4>
+          <el-form :model="priceSettings" label-width="180px">
+            <el-form-item label="Small Arms Cache 价格">
+              <el-input-number v-model="priceSettings.small" :min="0" @change="recalculateValues" />
+            </el-form-item>
+            <el-form-item label="Medium Arms Cache 价格">
+              <el-input-number v-model="priceSettings.medium" :min="0" @change="recalculateValues" />
+            </el-form-item>
+            <el-form-item label="Heavy Arms Cache 价格">
+              <el-input-number v-model="priceSettings.heavy" :min="0" @change="recalculateValues" />
+            </el-form-item>
+            <el-form-item label="Armor Cache 价格">
+              <el-input-number v-model="priceSettings.armor" :min="0" @change="recalculateValues" />
+            </el-form-item>
+            <el-form-item label="Melee Cache 价格">
+              <el-input-number v-model="priceSettings.melee" :min="0" @change="recalculateValues" />
+            </el-form-item>
+            <el-form-item label="Points 价格">
+              <el-input-number v-model="priceSettings.points" :min="0" @change="recalculateValues" />
+            </el-form-item>
+          </el-form>
+        </div>
         <div class="faction-details" v-for="faction in warData.factions" :key="faction.id">
           <h4>{{ faction.name }}</h4>
           <el-descriptions :column="2" border>
@@ -147,7 +169,42 @@ const loading = ref(false)
 const error = ref(null)
 const warData = ref(null)
 const splitResult = ref(null)
+const priceSettings = reactive({
+  small: 0,
+  medium: 0,
+  heavy: 0,
+  armor: 0,
+  melee: 0,
+  points: 0 // Will be updated in analyzeWar
+})
 
+const recalculateValues = () => {
+  if (!warData.value) return;
+
+  for (const faction of warData.value.factions) {
+    let cacheValue = 0;
+    
+    // 重新计算每种cache的价值
+    if (faction.caches) {
+      faction.caches.small.value = faction.caches.small.quantity * priceSettings.small;
+      faction.caches.medium.value = faction.caches.medium.quantity * priceSettings.medium;
+      faction.caches.heavy.value = faction.caches.heavy.quantity * priceSettings.heavy;
+      faction.caches.armor.value = faction.caches.armor.quantity * priceSettings.armor;
+      faction.caches.melee.value = faction.caches.melee.quantity * priceSettings.melee;
+      
+      // 更新总cache价值
+      cacheValue = Object.values(faction.caches).reduce((total, cache) => total + cache.value, 0);
+    }
+    
+    // 更新points价值
+    const pointsValue = (faction.rewards?.points || 0) * priceSettings.points;
+    
+    // 更新faction的价值数据
+    faction.cacheValue = cacheValue;
+    faction.pointsValue = pointsValue;
+    faction.totalValue = cacheValue + pointsValue;
+  }
+}
 const isValidRatio = computed(() => {
   return splitForm.faction1Ratio + splitForm.faction2Ratio === 100
 })
@@ -327,48 +384,51 @@ const calculateSplit = () => {
 };
 
 
-
 const analyzeWar = async () => {
   if (!form.apiKey || !form.warId) {
     error.value = '请填写API Key和War ID'
     return
   }
-
   loading.value = true
   error.value = null
   warData.value = null
   splitResult.value = null
-
   try {
     // 获取RW信息
     const warResponse = await axios.get(
       `https://api.torn.com/v2/faction/${form.warId}/rankedwarreport?key=${form.apiKey}`
     )
-
     // 获取物品价格信息
     const itemsResponse = await axios.get(
       `https://api.torn.com/v2/torn/items?cat=Supply%20Pack&sort=ASC&key=${form.apiKey}`
     )
-
     // 获取points市场价格信息
     const pointsResponse = await axios.get(
       `https://api.torn.com/v2/market?selections=pointsmarket&sort=DESC&key=${form.apiKey}`
     )
-
     const warInfo = warResponse.data.rankedwarreport
     const itemPrices = itemsResponse.data.items
     
+    // 设置默认价格
+    priceSettings.small = Object.values(itemPrices).find(i => i.id === 1120)?.value?.market_price || 0
+    priceSettings.medium = Object.values(itemPrices).find(i => i.id === 1121)?.value?.market_price || 0
+    priceSettings.heavy = Object.values(itemPrices).find(i => i.id === 1122)?.value?.market_price || 0
+    priceSettings.armor = Object.values(itemPrices).find(i => i.id === 1118)?.value?.market_price || 0
+    priceSettings.melee = Object.values(itemPrices).find(i => i.id === 1119)?.value?.market_price || 0
+
     // 获取最低points价格
     const pointsMarket = pointsResponse.data.pointsmarket
     const lowestPointPrice = Object.values(pointsMarket)
       .sort((a, b) => a.cost - b.cost)[0]?.cost || 45000 // 如果获取失败则默认45k
+
+    // 设置 points 默认价格
+    priceSettings.points = lowestPointPrice;
 
     const processedData = {
       status: warInfo.status || '进行中',
       start: warInfo.start,
       factions: []
     }
-
     for (const faction of warInfo.factions) {
       let cacheValue = 0
       const caches = {
@@ -378,7 +438,7 @@ const analyzeWar = async () => {
         armor: { id: 1118, quantity: 0, value: 0 },
         melee: { id: 1119, quantity: 0, value: 0 }
       }
-
+    
       if (faction.rewards && faction.rewards.items) {
         for (const item of faction.rewards.items) {
           const itemPrice = Object.values(itemPrices).find(i => i.id === item.id)?.value?.market_price || 0
@@ -403,7 +463,7 @@ const analyzeWar = async () => {
       }
       
       const pointsValue = (faction.rewards?.points || 0) * lowestPointPrice
-
+    
       processedData.factions.push({
         id: faction.id,
         name: faction.name,
@@ -414,7 +474,7 @@ const analyzeWar = async () => {
         totalValue: cacheValue + pointsValue
       })
     }
-
+    
     warData.value = processedData
   } catch (e) {
     error.value = e.response?.data?.error || '获取数据失败'
@@ -448,6 +508,10 @@ const analyzeWar = async () => {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid #eee;
+}
+
+.price-settings .el-input-number {
+  width: 100%; /* Increase width by 100% (double the default) */
 }
 
 .error-message {
