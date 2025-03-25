@@ -196,8 +196,8 @@ const recalculateValues = () => {
       cacheValue = Object.values(faction.caches).reduce((total, cache) => total + cache.value, 0);
     }
     
-    // 更新points价值
-    const pointsValue = (faction.rewards?.points || 0) * priceSettings.points;
+    // 更新points价值 - 修复：直接使用faction.pointsCount而非尝试访问faction.rewards
+    const pointsValue = (faction.pointsCount || 0) * priceSettings.points;
     
     // 更新faction的价值数据
     faction.cacheValue = cacheValue;
@@ -326,7 +326,7 @@ const calculateSplit = () => {
       return res;
     }
 
-    // 如果剩余 diff 小于所有可转移 cache 中最小的单价，则再转移一件会“过补”，此时直接用现金结算
+    // 如果剩余 diff 小于所有可转移 cache 中最小的单价，则再转移一件会"过补"，此时直接用现金结算
     let minAvailable = Infinity;
     for (const i of availableIndices) {
       if (caches[i].unitValue < minAvailable) {
@@ -462,7 +462,9 @@ const analyzeWar = async () => {
         cacheValue = Object.values(caches).reduce((total, cache) => total + cache.value, 0)
       }
       
-      const pointsValue = (faction.rewards?.points || 0) * lowestPointPrice
+      // 保存points数量，用于后续价格重新计算
+      const pointsCount = faction.rewards?.points || 0
+      const pointsValue = pointsCount * lowestPointPrice
     
       processedData.factions.push({
         id: faction.id,
@@ -471,6 +473,7 @@ const analyzeWar = async () => {
         caches: caches,
         cacheValue: cacheValue,
         pointsValue: pointsValue,
+        pointsCount: pointsCount, // 新增：保存points数量
         totalValue: cacheValue + pointsValue
       })
     }
