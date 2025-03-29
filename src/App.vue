@@ -3,10 +3,10 @@
     <el-card class="input-card">
       <template #header>
         <div class="card-header">
-          <h2>Torn RW 分析器</h2>
+          <h2>Torn RW 分箱器</h2>
         </div>
       </template>
-      
+      <p>给假赛计算按比例分箱子的最小现金方案</p>
       <el-form :model="form" label-width="120px">
         <el-form-item label="API Key">
           <el-input v-model="form.apiKey" placeholder="请输入您的Torn API Key" show-password />
@@ -18,6 +18,101 @@
           <el-button type="primary" @click="analyzeWar" :loading="loading">分析</el-button>
         </el-form-item>
       </el-form>
+    </el-card>
+
+    <!-- 新增的Faction Attacks分析卡片 -->
+    <el-card class="attacks-card">
+      <template #header>
+        <div class="card-header">
+          <h2>RW丢分分析</h2>
+        </div>
+      </template>
+      <p>根据目前的住院情况，计算RW双方各自无缝被刷会丢多少分。（注：这里只能计算你自己帮派正在进行的RW！）</p>
+      <el-form :model="attacksForm" label-width="120px">
+        <el-form-item label="API Key">
+          <el-input v-model="attacksForm.apiKey" placeholder="请输入您的Torn API Key" show-password />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="fetchAttackData" :loading="attacksLoading">获取当前战争数据</el-button>
+        </el-form-item>
+      </el-form>
+
+      <div v-if="attacksData">
+        <el-alert 
+          title="数据获取成功" 
+          type="success" 
+          :closable="false" 
+          style="margin-bottom: 20px"
+        >
+          <template #default>
+            <p>我方派系: {{ attacksData.ourFaction.name }}</p>
+            <p>对方派系: {{ attacksData.opponentFaction.name }}</p>
+            <p>战争开始时间: {{ formatDate(attacksData.startTimestamp) }}</p>
+            <p>攻击记录数: {{ attacksData.attacksCount }}</p>
+          </template>
+        </el-alert>
+        
+        <el-divider content-position="center">预测计算</el-divider>
+        
+        <el-form :model="hoursForm" label-width="180px">
+          <el-form-item label="预测多少小时后">
+            <el-input-number v-model="hoursForm.hours" :min="0" :precision="1" :step="0.5" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="calculateAttackPotential">计算预测</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <div v-if="attacksLoading && !attacksData">
+        <el-progress 
+          :percentage="100" 
+          status="active" 
+          :indeterminate="true" 
+          :duration="3" 
+          :stroke-width="15"
+          style="margin: 20px 0"
+        ></el-progress>
+        <p class="load-message">{{ attacksError || '正在获取数据，请耐心等待...' }}</p>
+      </div>
+
+      <div v-if="attacksResult" class="attacks-result">
+        <el-divider content-position="center">预测结果</el-divider>
+        
+        <el-descriptions title="我方派系" :column="1" border>
+          <el-descriptions-item label="总丢分">{{ attacksResult.ourFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item label="成员详情">
+            <el-table :data="attacksResult.ourMembers" stripe style="width: 100%">
+              <el-table-column prop="name" label="成员" width="150" />
+              <el-table-column prop="status" label="状态" width="100" />
+              <el-table-column prop="attackCount" label="可被攻击次数" width="130" />
+              <el-table-column prop="avgRespect" label="平均丢分" width="130" />
+              <el-table-column prop="totalLoss" label="总丢分" width="100" />
+            </el-table>
+          </el-descriptions-item>
+        </el-descriptions>
+        
+        <el-descriptions style="margin-top: 20px" title="对方派系" :column="1" border>
+          <el-descriptions-item label="总丢分">{{ attacksResult.opponentFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item label="成员详情">
+            <el-table :data="attacksResult.opponentMembers" stripe style="width: 100%">
+              <el-table-column prop="name" label="成员" width="150" />
+              <el-table-column prop="status" label="状态" width="100" />
+              <el-table-column prop="attackCount" label="可被攻击次数" width="130" />
+              <el-table-column prop="avgRespect" label="平均丢分" width="130" />
+              <el-table-column prop="totalLoss" label="总丢分" width="100" />
+            </el-table>
+          </el-descriptions-item>
+        </el-descriptions>
+      </div>
+
+      <el-alert 
+        v-if="attacksError" 
+        :title="attacksError" 
+        type="error" 
+        show-icon
+        style="margin-top: 20px"
+      />
     </el-card>
 
     <el-card v-if="warData" class="result-card">
@@ -152,7 +247,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import axios from 'axios'
 
 const form = reactive({
@@ -383,7 +478,6 @@ const calculateSplit = () => {
   splitResult.value.transfers.push(transfer);
 };
 
-
 const analyzeWar = async () => {
   if (!form.apiKey || !form.warId) {
     error.value = '请填写API Key和War ID'
@@ -485,6 +579,313 @@ const analyzeWar = async () => {
     loading.value = false
   }
 }
+
+// 新增的攻击分析相关变量
+const attacksForm = reactive({
+  apiKey: ''
+})
+
+const hoursForm = reactive({
+  hours: 1
+})
+
+const attacksLoading = ref(false)
+const attacksError = ref(null)
+const attacksData = ref(null)
+const attacksResult = ref(null)
+
+// 获取战争攻击数据
+const fetchAttackData = async () => {
+  if (!attacksForm.apiKey) {
+    attacksError.value = '请填写API Key'
+    return
+  }
+  
+  attacksLoading.value = true
+  attacksError.value = null
+  attacksData.value = null
+  attacksResult.value = null
+  
+  try {
+    // 1. 获取用户信息，确定用户当前派系
+    const userResponse = await axios.get(
+      `https://api.torn.com/v2/user?key=${attacksForm.apiKey}`
+    )
+    
+    const userData = userResponse.data
+    const userFactionId = userData.faction?.faction_id
+    
+    if (!userFactionId) {
+      attacksError.value = '您当前没有加入派系'
+      return
+    }
+    
+    // 2. 获取最新的ranked war
+    const rankedWarsResponse = await axios.get(
+      `https://api.torn.com/v2/faction/${userFactionId}/rankedwars?key=${attacksForm.apiKey}`
+    )
+    
+    const rankedWarsData = rankedWarsResponse.data
+    
+    if (!rankedWarsData || !rankedWarsData.rankedwars) {
+      attacksError.value = '未找到ranked wars数据'
+      return
+    }
+    
+    // 按开始时间排序，获取最新的ranked war
+    const rankedWars = Object.values(rankedWarsData.rankedwars).sort((a, b) => b.start - a.start)
+    
+    if (!rankedWars.length) {
+      attacksError.value = '未找到任何ranked war记录'
+      return
+    }
+    
+    const latestRankedWar = rankedWars[0]
+    
+    // 检查最新的ranked war是否正在进行中
+    if (latestRankedWar.winner !== null) {
+      attacksError.value = '当前没有正在进行的ranked war'
+      return
+    }
+    
+    const startTimestamp = latestRankedWar.start
+    const factionIds = [latestRankedWar.factions[0].id, latestRankedWar.factions[1].id]
+    const opponentFactionId = factionIds[0] !== userFactionId ? factionIds[0] : factionIds[1]
+    
+    // 3. 获取双方派系成员
+    const ourFactionResponse = await axios.get(
+      `https://api.torn.com/v2/faction/${userFactionId}/members?key=${attacksForm.apiKey}`
+    )
+    
+    const opponentFactionResponse = await axios.get(
+      `https://api.torn.com/v2/faction/${opponentFactionId}/members?key=${attacksForm.apiKey}`
+    )
+    
+    const ourFactionMembers = ourFactionResponse.data.members
+    const opponentFactionMembers = opponentFactionResponse.data.members
+    
+    // 4. 分页获取所有攻击记录
+    const allAttacks = []
+    let currentTimestamp = startTimestamp
+    let hasMore = true
+    
+    while (hasMore) {
+      try {
+        // 为避免API限流，每次请求间隔1秒
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        
+        // 进度提示
+        attacksLoading.value = true
+        attacksError.value = `正在获取从 ${formatDate(currentTimestamp)} 开始的攻击记录...`
+        
+        const attacksResponse = await axios.get(
+          `https://api.torn.com/v2/faction/attacksfull?from=${currentTimestamp}&sort=ASC&key=${attacksForm.apiKey}`
+        )
+        
+        const attacks = Object.values(attacksResponse.data.attacks || {})
+        
+        if (attacks.length === 0) {
+          hasMore = false
+          break
+        }
+        
+        allAttacks.push(...attacks)
+        
+        // 获取最后一条记录的时间戳作为下一次查询的起始时间
+        const lastAttackTimestamp = Math.max(...attacks.map(attack => parseInt(attack.started)))
+        
+        // 如果最后一条记录的时间戳没有变化，说明没有更多数据了
+        if (lastAttackTimestamp <= currentTimestamp) {
+          hasMore = false
+        } else {
+          currentTimestamp = lastAttackTimestamp
+        }
+        
+        // 更新进度提示
+        attacksError.value = `已获取 ${allAttacks.length} 条攻击记录...`
+      } catch (e) {
+        attacksError.value = e.response?.data?.error?.error || '获取攻击记录失败'
+        break
+      }
+    }
+    
+    // 5. 存储数据
+    attacksData.value = {
+      startTimestamp,
+      ourFaction: {
+        id: userFactionId,
+        name: latestRankedWar.factions.find(f => f.id === userFactionId)?.name || '我方派系'
+      },
+      opponentFaction: {
+        id: opponentFactionId,
+        name: latestRankedWar.factions.find(f => f.id === opponentFactionId)?.name || '对方派系'
+      },
+      ourMembers: ourFactionMembers,
+      opponentMembers: opponentFactionMembers,
+      attacks: allAttacks,
+      attacksCount: allAttacks.length
+    }
+    
+    attacksError.value = null
+  } catch (e) {
+    attacksError.value = e.response?.data?.error?.error || '获取数据失败'
+  } finally {
+    attacksLoading.value = false
+  }
+}
+
+// 计算攻击潜力
+const calculateAttackPotential = () => {
+  if (!attacksData.value) return
+  
+  const { 
+    ourFaction, 
+    opponentFaction, 
+    ourMembers, 
+    opponentMembers, 
+    attacks, 
+    startTimestamp 
+  } = attacksData.value
+  
+  // 计算目标时间戳
+  const currentTimestamp = Math.floor(Date.now() / 1000)
+  const hoursInSeconds = hoursForm.hours * 3600
+  const checkTimestamp = currentTimestamp + hoursInSeconds
+  
+  // 计算每个成员的被攻击次数和平均丢分
+  const ourMembersResult = []
+  const opponentMembersResult = []
+  let ourFactionTotalLoss = 0
+  let opponentFactionTotalLoss = 0
+  
+  // 处理我方成员
+  for (const [iter, member] of Object.entries(ourMembers)) {
+    const memberId = member.id
+    const status = member.status?.state || 'Unknown'
+    const untilTimestamp = member.status?.until
+    
+    const attackCount = calculateMemberAttackPotential(status, untilTimestamp, checkTimestamp)
+    const avgRespect = calculateAverageRespect(attacks, memberId, opponentFaction.id)
+    const totalLoss = attackCount * avgRespect
+    
+    ourFactionTotalLoss += totalLoss
+    
+    ourMembersResult.push({
+      id: memberId,
+      name: member.name,
+      status,
+      attackCount,
+      avgRespect: avgRespect.toFixed(2),
+      totalLoss: totalLoss.toFixed(2)
+    })
+  }
+  
+  // 处理对方成员
+  for (const [iter, member] of Object.entries(opponentMembers)) {
+    const memberId = member.id
+    const status = member.status?.state || 'Unknown'
+    const untilTimestamp = member.status?.until
+    
+    const attackCount = calculateMemberAttackPotential(status, untilTimestamp, checkTimestamp)
+    const avgRespect = calculateAverageRespect(attacks, memberId, ourFaction.id)
+    const totalLoss = attackCount * avgRespect
+    
+    opponentFactionTotalLoss += totalLoss
+    
+    opponentMembersResult.push({
+      id: memberId,
+      name: member.name,
+      status,
+      attackCount,
+      avgRespect: avgRespect.toFixed(2),
+      totalLoss: totalLoss.toFixed(2)
+    })
+  }
+  
+  // 结果排序 - 按总丢分降序
+  ourMembersResult.sort((a, b) => parseFloat(b.totalLoss) - parseFloat(a.totalLoss))
+  opponentMembersResult.sort((a, b) => parseFloat(b.totalLoss) - parseFloat(a.totalLoss))
+  
+  // 保存结果
+  attacksResult.value = {
+    ourFactionTotalLoss,
+    opponentFactionTotalLoss,
+    ourMembers: ourMembersResult,
+    opponentMembers: opponentMembersResult
+  }
+}
+
+// 计算成员可被攻击的次数
+const calculateMemberAttackPotential = (status, untilTimestamp, checkTimestamp) => {
+  if (status !== "Okay" && status !== "Hospital") {
+    return 0
+  }
+  
+  // 如果是医院状态，且出院时间大于当前时间，则无法被攻击
+  if (status === "Hospital" && untilTimestamp && untilTimestamp > checkTimestamp) {
+    return 0
+  }
+  
+  // 每20分钟可被攻击一次
+  const attackInterval = 20 * 60  // 20分钟转换为秒
+  
+  if (status === "Hospital") {
+    // 如果是医院状态，计算从出院时间到检查时间的攻击次数
+    return Math.floor((checkTimestamp - untilTimestamp) / attackInterval)
+  } else {
+    // 如果是正常状态，使用从当前时间到检查时间的间隔
+    const currentTime = Math.floor(Date.now() / 1000)
+    return Math.floor((checkTimestamp - currentTime) / attackInterval)
+  }
+}
+
+// 计算成员的平均respect损失
+const calculateAverageRespect = (attacks, memberId, opponentFactionId) => {
+  const respects = []
+  console.log(`计算用户ID ${memberId} 的平均丢分，对方派系ID: ${opponentFactionId}`)
+  
+  for (const attack of attacks) {
+    const respectGain = parseFloat(attack.respect_gain || 0)
+    
+    // 排除异常值
+    if (respectGain === 0 || respectGain > 20) {
+      continue
+    }
+    
+    const attacker = attack.attacker
+    const defender = attack.defender
+    
+    // 检查攻击记录中的防守方ID是否匹配当前成员ID
+    if (defender && String(defender.id) === String(memberId)) {
+      // 检查攻击方是否来自对方派系
+      if (attacker && String(attacker.faction_id) === String(opponentFactionId)) {
+        console.log(`找到匹配的攻击记录: ${attack.code}, 丢分: ${respectGain}`)
+        respects.push(respectGain)
+      }
+    }
+  }
+  
+  console.log(`用户ID ${memberId} 找到 ${respects.length} 条攻击记录`)
+  
+  // 如果没有数据，返回默认值10
+  if (respects.length === 0) {
+    console.log(`用户ID ${memberId} 没有匹配的攻击记录，返回默认值10`)
+    return 10.0
+  }
+  
+  const avgRespect = respects.reduce((sum, val) => sum + val, 0) / respects.length
+  console.log(`用户ID ${memberId} 的平均丢分: ${avgRespect.toFixed(2)}`)
+  return avgRespect
+}
+
+// 监视API Key变化并同步
+watch(() => form.apiKey, (newVal) => {
+  attacksForm.apiKey = newVal;
+});
+
+watch(() => attacksForm.apiKey, (newVal) => {
+  form.apiKey = newVal;
+});
 </script>
 
 <style scoped>
@@ -497,7 +898,8 @@ const analyzeWar = async () => {
 .input-card,
 .result-card,
 .error-card,
-.reward-split-card {
+.reward-split-card,
+.attacks-card {
   margin-bottom: 20px;
 }
 

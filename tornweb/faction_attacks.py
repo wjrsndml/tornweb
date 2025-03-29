@@ -104,7 +104,6 @@ def calculate_average_respect(attacks, member_id, opponent_id):
     参数:
         attacks: 攻击记录列表
         member_id: 成员ID
-        is_attacker: 是否为攻击方
     
     返回:
         平均respect值
