@@ -89,11 +89,13 @@ def calculate_attack_potential(status, until_timestamp, current_timestamp):
     # 如果是医院状态，且出院时间大于当前时间，则无法被攻击
     if status == "Hospital" and until_timestamp and until_timestamp > current_timestamp:
         return 0
-    
     # 每20分钟可被攻击一次
     # 假设从ranked war开始到当前时间的每20分钟都可以被攻击一次
     attack_interval = 20 * 60  # 20分钟转换为秒
-    return (current_timestamp - until_timestamp) // attack_interval if until_timestamp else 1
+    if status == "Hospital":
+        return (current_timestamp - until_timestamp) // attack_interval
+    else:
+        return (current_timestamp - int(time.time())) // attack_interval
 
 def calculate_average_respect(attacks, member_id, opponent_id):
     """
@@ -196,67 +198,53 @@ def main():
     print(f"我方派系成员数: {len(our_faction_members)}")
     print(f"对方派系成员数: {len(opponent_faction_members)}")
     
-    # 让用户选择是从文件加载攻击记录还是从API获取
-    input_file = input("请输入攻击记录文件名(输入none从API获取): ")
+    # 从API获取攻击记录
+    print("开始从API获取攻击记录...")
     
-    if input_file.lower() == "none":
-        # 从API获取攻击记录
-        print("开始从API获取攻击记录...")
+    all_attacks = []
+    current_timestamp = start_timestamp
+    has_more = True
+    
+    while has_more:
+        print(f"获取从 {timestamp_to_datetime(current_timestamp)} 开始的攻击记录...")
         
-        all_attacks = []
-        current_timestamp = start_timestamp
-        has_more = True
+        # 限制API请求，每秒一条
+        time.sleep(1)
         
-        while has_more:
-            print(f"获取从 {timestamp_to_datetime(current_timestamp)} 开始的攻击记录...")
-            
-            # 限制API请求，每秒一条
-            time.sleep(1)
-            
-            response = api.get_faction_attacks(from_timestamp=current_timestamp)
-            
-            if not response or "attacks" not in response:
-                print("获取攻击记录失败")
-                break
-            
-            attacks = list(response["attacks"].values())
-            if not attacks:
-                print("没有更多攻击记录")
-                has_more = False
-                break
-            
-            print(f"获取到 {len(attacks)} 条攻击记录")
-            all_attacks.extend(attacks)
-            
-            # 获取最后一条记录的时间戳作为下一次查询的起始时间
-            # 我们需要按攻击开始时间排序，所以使用start时间
-            last_attack_timestamp = max([int(attack["started"]) for attack in attacks])
-            
-            # 如果最后一条记录的时间戳没有变化，说明没有更多数据了
-            if last_attack_timestamp <= current_timestamp:
-                print("没有更多新的攻击记录")
-                has_more = False
-            else:
-                current_timestamp = last_attack_timestamp
-                print(f"下一次查询的起始时间为: {timestamp_to_datetime(current_timestamp)}")
+        response = api.get_faction_attacks(from_timestamp=current_timestamp)
         
-        print(f"总共获取到 {len(all_attacks)} 条攻击记录")
+        if not response or "attacks" not in response:
+            print("获取攻击记录失败")
+            break
         
-        # 将结果保存到文件
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(all_attacks, f, indent=2)
+        attacks = list(response["attacks"].values())
+        if not attacks:
+            print("没有更多攻击记录")
+            has_more = False
+            break
         
-        print(f"攻击记录已保存到 {output_file}")
-    else:
-        # 从文件加载攻击记录
-        try:
-            print(f"从文件 {input_file} 加载攻击记录...")
-            with open(input_file, 'r', encoding='utf-8') as f:
-                all_attacks = json.load(f)
-            print(f"成功加载 {len(all_attacks)} 条攻击记录")
-        except Exception as e:
-            print(f"加载文件失败: {e}")
-            return
+        print(f"获取到 {len(attacks)} 条攻击记录")
+        all_attacks.extend(attacks)
+        
+        # 获取最后一条记录的时间戳作为下一次查询的起始时间
+        # 我们需要按攻击开始时间排序，所以使用start时间
+        last_attack_timestamp = max([int(attack["started"]) for attack in attacks])
+        
+        # 如果最后一条记录的时间戳没有变化，说明没有更多数据了
+        if last_attack_timestamp <= current_timestamp:
+            print("没有更多新的攻击记录")
+            has_more = False
+        else:
+            current_timestamp = last_attack_timestamp
+            print(f"下一次查询的起始时间为: {timestamp_to_datetime(current_timestamp)}")
+    
+    print(f"总共获取到 {len(all_attacks)} 条攻击记录")
+    
+    # 将结果保存到文件
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(all_attacks, f, indent=2)
+    
+    print(f"攻击记录已保存到 {output_file}")
     
     # 输入小时数，计算未来某个时间点
     while True:
@@ -326,10 +314,6 @@ def main():
     print(f"我方派系总丢分: {our_faction_total_loss:.2f}")
     print(f"对方派系总丢分: {opponent_faction_total_loss:.2f}")
     
-    if our_faction_total_loss < opponent_faction_total_loss:
-        print(f"我方领先 {opponent_faction_total_loss - our_faction_total_loss:.2f} 分")
-    else:
-        print(f"对方领先 {our_faction_total_loss - opponent_faction_total_loss:.2f} 分")
 
 if __name__ == "__main__":
     main() 
