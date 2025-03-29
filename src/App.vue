@@ -45,8 +45,8 @@
           style="margin-bottom: 20px"
         >
           <template #default>
-            <p>我方派系: {{ attacksData.ourFaction.name }}</p>
-            <p>对方派系: {{ attacksData.opponentFaction.name }}</p>
+            <p>我方帮派: {{ attacksData.ourFaction.name }}</p>
+            <p>对方帮派: {{ attacksData.opponentFaction.name }}</p>
             <p>战争开始时间: {{ formatDate(attacksData.startTimestamp) }}</p>
             <p>攻击记录数: {{ attacksData.attacksCount }}</p>
           </template>
@@ -79,7 +79,7 @@
       <div v-if="attacksResult" class="attacks-result">
         <el-divider content-position="center">预测结果</el-divider>
         
-        <el-descriptions title="我方派系" :column="1" border>
+        <el-descriptions title="我方帮派" :column="1" border>
           <el-descriptions-item label="总丢分">{{ attacksResult.ourFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
           <el-descriptions-item label="成员详情">
             <el-table :data="attacksResult.ourMembers" stripe style="width: 100%">
@@ -92,7 +92,7 @@
           </el-descriptions-item>
         </el-descriptions>
         
-        <el-descriptions style="margin-top: 20px" title="对方派系" :column="1" border>
+        <el-descriptions style="margin-top: 20px" title="对方帮派" :column="1" border>
           <el-descriptions-item label="总丢分">{{ attacksResult.opponentFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
           <el-descriptions-item label="成员详情">
             <el-table :data="attacksResult.opponentMembers" stripe style="width: 100%">
@@ -327,7 +327,7 @@ const calculateSplit = () => {
   const faction2 = warData.value.factions[1];
   const totalValue = faction1.totalValue + faction2.totalValue;
 
-  // 计算各派系目标金额
+  // 计算帮派目标金额
   const targetValue1 = totalValue * (splitForm.faction1Ratio / 100);
   const targetValue2 = totalValue * (splitForm.faction2Ratio / 100);
 
@@ -374,7 +374,7 @@ const calculateSplit = () => {
     };
   });
 
-  // fromTotal 为转出派系初始的 caches 总价值
+  // fromTotal 为转出帮派初始的 caches 总价值
   const fromTotal = fromFaction.totalValue;
   const n = caches.length;
 
@@ -607,7 +607,7 @@ const fetchAttackData = async () => {
   attacksResult.value = null
   
   try {
-    // 1. 获取用户信息，确定用户当前派系
+    // 1. 获取用户信息，确定用户当前帮派
     const userResponse = await axios.get(
       `https://api.torn.com/v2/user?key=${attacksForm.apiKey}`
     )
@@ -616,7 +616,7 @@ const fetchAttackData = async () => {
     const userFactionId = userData.faction?.faction_id
     
     if (!userFactionId) {
-      attacksError.value = '您当前没有加入派系'
+      attacksError.value = '您当前没有加入帮派'
       return
     }
     
@@ -652,7 +652,7 @@ const fetchAttackData = async () => {
     const factionIds = [latestRankedWar.factions[0].id, latestRankedWar.factions[1].id]
     const opponentFactionId = factionIds[0] !== userFactionId ? factionIds[0] : factionIds[1]
     
-    // 3. 获取双方派系成员
+    // 3. 获取双方帮派成员
     const ourFactionResponse = await axios.get(
       `https://api.torn.com/v2/faction/${userFactionId}/members?key=${attacksForm.apiKey}`
     )
@@ -714,11 +714,11 @@ const fetchAttackData = async () => {
       startTimestamp,
       ourFaction: {
         id: userFactionId,
-        name: latestRankedWar.factions.find(f => f.id === userFactionId)?.name || '我方派系'
+        name: latestRankedWar.factions.find(f => f.id === userFactionId)?.name || '我方帮派'
       },
       opponentFaction: {
         id: opponentFactionId,
-        name: latestRankedWar.factions.find(f => f.id === opponentFactionId)?.name || '对方派系'
+        name: latestRankedWar.factions.find(f => f.id === opponentFactionId)?.name || '对方帮派'
       },
       ourMembers: ourFactionMembers,
       opponentMembers: opponentFactionMembers,
@@ -842,7 +842,7 @@ const calculateMemberAttackPotential = (status, untilTimestamp, checkTimestamp) 
 // 计算成员的平均respect损失
 const calculateAverageRespect = (attacks, memberId, opponentFactionId) => {
   const respects = []
-  console.log(`计算用户ID ${memberId} 的平均丢分，对方派系ID: ${opponentFactionId}`)
+  console.log(`计算用户ID ${memberId} 的平均丢分，对方帮派ID: ${opponentFactionId}`)
   
   for (const attack of attacks) {
     const respectGain = parseFloat(attack.respect_gain || 0)
@@ -857,7 +857,7 @@ const calculateAverageRespect = (attacks, memberId, opponentFactionId) => {
     
     // 检查攻击记录中的防守方ID是否匹配当前成员ID
     if (defender && String(defender.id) === String(memberId)) {
-      // 检查攻击方是否来自对方派系
+      // 检查攻击方是否来自对方帮派
       if (attacker && String(attacker.faction_id) === String(opponentFactionId)) {
         console.log(`找到匹配的攻击记录: ${attack.code}, 丢分: ${respectGain}`)
         respects.push(respectGain)
