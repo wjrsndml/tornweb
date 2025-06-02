@@ -5,16 +5,9 @@
         <h2>Torn Ranked War Chain 查看器</h2>
       </div>
     </template>
-    <p>输入您的API密钥和Ranked War ID以获取对应rw参战帮派的chain报告。</p>
+    <p>输入Ranked War ID以获取对应rw参战帮派的chain报告。</p>
     
     <el-form :model="form" label-width="120px">
-      <el-form-item label="API Key">
-        <el-input 
-          v-model="form.apiKey" 
-          placeholder="请输入您的Torn API Key" 
-          show-password 
-        />
-      </el-form-item>
       <el-form-item label="RW War ID">
         <el-input 
           v-model="form.rankedWarId" 
@@ -26,6 +19,7 @@
           type="primary" 
           @click="fetchChainData" 
           :loading="loading"
+          :disabled="!apiKey"
         >
           获取数据
         </el-button>
@@ -265,198 +259,193 @@
   </el-card>
 </template>
 
-<script>
+<script setup>
 import { ref, reactive } from 'vue'
 import axios from 'axios'
 
-export default {
-  name: 'ChainAnalyzer',
-  setup() {
-    const API_BASE_URL = 'https://api.torn.com/v2'
-    
-    const form = reactive({
-      apiKey: '',
-      rankedWarId: ''
-    })
-    
-    const loading = ref(false)
-    const statusMessage = ref('')
-    const statusType = ref('info')
-    const warDetails = ref(null)
-    const factionChains = ref([])
-    
-    const fetchApi = async (endpoint, apiKey) => {
-      let url = `${API_BASE_URL}${endpoint}`
-      if (url.includes('?')) {
-        url += `&key=${apiKey}`
-      } else {
-        url += `?key=${apiKey}`
-      }
-      
-      try {
-        const response = await axios.get(url)
-        if (response.data.error) {
-          throw new Error(`Torn API 错误: ${response.data.error.error} (代码: ${response.data.error.code})`)
-        }
-        return response.data
-      } catch (error) {
-        if (error.response) {
-          const errorData = error.response.data
-          let errorMessage = `API请求失败，状态码: ${error.response.status}.`
-          if (errorData && errorData.error && errorData.error.error) {
-            errorMessage += ` 错误: ${errorData.error.error}`
-          }
-          throw new Error(errorMessage)
-        }
-        throw error
-      }
-    }
-    
-    const fetchChainData = async () => {
-      if (!form.apiKey || !form.rankedWarId) {
-        statusMessage.value = '请输入API密钥和Ranked War ID'
-        statusType.value = 'error'
-        return
-      }
-      
-      loading.value = true
-      statusMessage.value = '正在获取战争报告...'
-      statusType.value = 'info'
-      warDetails.value = null
-      factionChains.value = []
-      
-      try {
-        // 获取战争报告
-        const warReportEndpoint = `/faction/${form.rankedWarId}/rankedwarreport`
-        const warData = await fetchApi(warReportEndpoint, form.apiKey)
-        
-        if (!warData.rankedwarreport || !warData.rankedwarreport.factions || warData.rankedwarreport.factions.length < 2) {
-          throw new Error('无法获取有效的战争报告或帮派信息。请检查Ranked War ID是否正确，以及API密钥是否有权限访问此报告。')
-        }
-        
-        const warReport = warData.rankedwarreport
-        warDetails.value = {
-          start: warReport.start,
-          end: warReport.end
-        }
-        
-        const factionsInvolved = warReport.factions
-        
-        // 处理每个帮派的chain数据
-        for (const factionInfo of factionsInvolved) {
-          await processFactionChains(factionInfo, warReport.start, warReport.end)
-        }
-        
-        statusMessage.value = '所有数据获取完成'
-        statusType.value = 'success'
-        
-      } catch (error) {
-        console.error('Error in fetchChainData:', error)
-        statusMessage.value = `获取数据失败: ${error.message}`
-        statusType.value = 'error'
-      } finally {
-        loading.value = false
-      }
-    }
-    
-    const processFactionChains = async (factionInfo, warStartTime, warEndTime) => {
-      statusMessage.value = `正在获取 ${factionInfo.name} 的基础chain列表...`
-      
-      const factionData = {
-        factionId: factionInfo.id,
-        factionName: factionInfo.name,
-        message: '',
-        chains: []
-      }
-      
-      try {
-        const chainsSummaryEndpoint = `/faction/${factionInfo.id}/chains?from=${warStartTime}&to=${warEndTime}&limit=100`
-        const chainsSummaryData = await fetchApi(chainsSummaryEndpoint, form.apiKey)
-        const chainSummaries = chainsSummaryData.chains || []
-        
-        if (chainSummaries.length === 0) {
-          factionData.message = '在此战争期间未找到chain'
-          factionChains.value.push(factionData)
-          return
-        }
-        
-        factionData.message = `找到 ${chainSummaries.length} 条基础chain记录${chainSummaries.length === 100 ? ' (已显示最近的100条)' : ''}`
-        
-        // 获取每个chain的详细报告
-        for (let i = 0; i < chainSummaries.length; i++) {
-          const summary = chainSummaries[i]
-          statusMessage.value = `正在获取 ${factionInfo.name} 的 Chain ID: ${summary.id} 详细报告 (${i + 1}/${chainSummaries.length})...`
-          
-          try {
-            const chainReportEndpoint = `/faction/${summary.id}/chainreport`
-            const reportData = await fetchApi(chainReportEndpoint, form.apiKey)
-            
-            if (reportData.chainreport) {
-              factionData.chains.push(reportData.chainreport)
-            }
-          } catch (reportError) {
-            console.error(`获取 Chain ID ${summary.id} 详细报告失败:`, reportError)
-          }
-          
-          // 添加延迟避免触发API频率限制
-          if (i < chainSummaries.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 100))
-          }
-        }
-        
-        factionData.message = `已加载 ${factionData.chains.length} 条chain的详细报告${chainSummaries.length === 100 ? ' (已显示最近的100条)' : ''}`
-        
-      } catch (error) {
-        console.error(`处理帮派 ${factionInfo.name} chains失败:`, error)
-        factionData.message = `处理 ${factionInfo.name} 的chain数据失败: ${error.message}`
-      }
-      
-      factionChains.value.push(factionData)
-    }
-    
-    const formatTimestamp = (timestamp) => {
-      if (!timestamp) return 'N/A'
-      const date = new Date(timestamp * 1000)
-      return date.toLocaleString('zh-CN', { 
-        year: 'numeric', 
-        month: '2-digit', 
-        day: '2-digit', 
-        hour: '2-digit', 
-        minute: '2-digit', 
-        second: '2-digit', 
-        hour12: false, 
-        timeZone: 'UTC' 
-      })
-    }
-    
-    const formatDuration = (seconds) => {
-      if (isNaN(seconds) || seconds < 0) return 'N/A'
-      const d = Math.floor(seconds / (3600 * 24))
-      const h = Math.floor(seconds % (3600 * 24) / 3600)
-      const m = Math.floor(seconds % 3600 / 60)
-      const s = Math.floor(seconds % 60)
-      
-      let parts = []
-      if (d > 0) parts.push(d + "天")
-      if (h > 0) parts.push(h + "小时")
-      if (m > 0) parts.push(m + "分钟")
-      if (s > 0 || parts.length === 0) parts.push(s + "秒")
-      
-      return parts.join(' ')
-    }
-    
-    return {
-      form,
-      loading,
-      statusMessage,
-      statusType,
-      warDetails,
-      factionChains,
-      fetchChainData,
-      formatTimestamp,
-      formatDuration
-    }
+const props = defineProps({
+  apiKey: {
+    type: String,
+    default: ''
   }
+})
+
+const API_BASE_URL = 'https://api.torn.com/v2'
+
+const form = reactive({
+  rankedWarId: ''
+})
+
+const loading = ref(false)
+const statusMessage = ref('')
+const statusType = ref('info')
+const warDetails = ref(null)
+const factionChains = ref([])
+
+const fetchApi = async (endpoint, apiKey) => {
+  let url = `${API_BASE_URL}${endpoint}`
+  if (url.includes('?')) {
+    url += `&key=${apiKey}`
+  } else {
+    url += `?key=${apiKey}`
+  }
+  
+  try {
+    const response = await axios.get(url)
+    if (response.data.error) {
+      throw new Error(`Torn API 错误: ${response.data.error.error} (代码: ${response.data.error.code})`)
+    }
+    return response.data
+  } catch (error) {
+    if (error.response) {
+      const errorData = error.response.data
+      let errorMessage = `API请求失败，状态码: ${error.response.status}.`
+      if (errorData && errorData.error && errorData.error.error) {
+        errorMessage += ` 错误: ${errorData.error.error}`
+      }
+      throw new Error(errorMessage)
+    }
+    throw error
+  }
+}
+
+const fetchChainData = async () => {
+  if (!form.rankedWarId) {
+    statusMessage.value = '请输入Ranked War ID'
+    statusType.value = 'error'
+    return
+  }
+  
+  if (!props.apiKey) {
+    statusMessage.value = '请先在侧边栏输入API密钥'
+    statusType.value = 'error'
+    return
+  }
+  
+  loading.value = true
+  statusMessage.value = '正在获取战争报告...'
+  statusType.value = 'info'
+  warDetails.value = null
+  factionChains.value = []
+  
+  try {
+    // 获取战争报告
+    const warReportEndpoint = `/faction/${form.rankedWarId}/rankedwarreport`
+    const warData = await fetchApi(warReportEndpoint, props.apiKey)
+    
+    if (!warData.rankedwarreport || !warData.rankedwarreport.factions || warData.rankedwarreport.factions.length < 2) {
+      throw new Error('无法获取有效的战争报告或帮派信息。请检查Ranked War ID是否正确，以及API密钥是否有权限访问此报告。')
+    }
+    
+    const warReport = warData.rankedwarreport
+    warDetails.value = {
+      start: warReport.start,
+      end: warReport.end
+    }
+    
+    const factionsInvolved = warReport.factions
+    
+    // 处理每个帮派的chain数据
+    for (const factionInfo of factionsInvolved) {
+      await processFactionChains(factionInfo, warReport.start, warReport.end)
+    }
+    
+    statusMessage.value = '所有数据获取完成'
+    statusType.value = 'success'
+    
+  } catch (error) {
+    console.error('Error in fetchChainData:', error)
+    statusMessage.value = `获取数据失败: ${error.message}`
+    statusType.value = 'error'
+  } finally {
+    loading.value = false
+  }
+}
+
+const processFactionChains = async (factionInfo, warStartTime, warEndTime) => {
+  statusMessage.value = `正在获取 ${factionInfo.name} 的基础chain列表...`
+  
+  const factionData = {
+    factionId: factionInfo.id,
+    factionName: factionInfo.name,
+    message: '',
+    chains: []
+  }
+  
+  try {
+    const chainsSummaryEndpoint = `/faction/${factionInfo.id}/chains?from=${warStartTime}&to=${warEndTime}&limit=100`
+    const chainsSummaryData = await fetchApi(chainsSummaryEndpoint, props.apiKey)
+    const chainSummaries = chainsSummaryData.chains || []
+    
+    if (chainSummaries.length === 0) {
+      factionData.message = '在此战争期间未找到chain'
+      factionChains.value.push(factionData)
+      return
+    }
+    
+    factionData.message = `找到 ${chainSummaries.length} 条基础chain记录${chainSummaries.length === 100 ? ' (已显示最近的100条)' : ''}`
+    
+    // 获取每个chain的详细报告
+    for (let i = 0; i < chainSummaries.length; i++) {
+      const summary = chainSummaries[i]
+      statusMessage.value = `正在获取 ${factionInfo.name} 的 Chain ID: ${summary.id} 详细报告 (${i + 1}/${chainSummaries.length})...`
+      
+      try {
+        const chainReportEndpoint = `/faction/${summary.id}/chainreport`
+        const reportData = await fetchApi(chainReportEndpoint, props.apiKey)
+        
+        if (reportData.chainreport) {
+          factionData.chains.push(reportData.chainreport)
+        }
+      } catch (reportError) {
+        console.error(`获取 Chain ID ${summary.id} 详细报告失败:`, reportError)
+      }
+      
+      // 添加延迟避免触发API频率限制
+      if (i < chainSummaries.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+    
+    factionData.message = `已加载 ${factionData.chains.length} 条chain的详细报告${chainSummaries.length === 100 ? ' (已显示最近的100条)' : ''}`
+    
+  } catch (error) {
+    console.error(`处理帮派 ${factionInfo.name} chains失败:`, error)
+    factionData.message = `处理 ${factionInfo.name} 的chain数据失败: ${error.message}`
+  }
+  
+  factionChains.value.push(factionData)
+}
+
+const formatTimestamp = (timestamp) => {
+  if (!timestamp) return 'N/A'
+  const date = new Date(timestamp * 1000)
+  return date.toLocaleString('zh-CN', { 
+    year: 'numeric', 
+    month: '2-digit', 
+    day: '2-digit', 
+    hour: '2-digit', 
+    minute: '2-digit', 
+    second: '2-digit', 
+    hour12: false, 
+    timeZone: 'UTC' 
+  })
+}
+
+const formatDuration = (seconds) => {
+  if (isNaN(seconds) || seconds < 0) return 'N/A'
+  const d = Math.floor(seconds / (3600 * 24))
+  const h = Math.floor(seconds % (3600 * 24) / 3600)
+  const m = Math.floor(seconds % 3600 / 60)
+  const s = Math.floor(seconds % 60)
+  
+  let parts = []
+  if (d > 0) parts.push(d + "天")
+  if (h > 0) parts.push(h + "小时")
+  if (m > 0) parts.push(m + "分钟")
+  if (s > 0 || parts.length === 0) parts.push(s + "秒")
+  
+  return parts.join(' ')
 }
 </script>
 

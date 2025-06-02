@@ -1,251 +1,294 @@
 <template>
-  <div class="container">
-    <el-card class="input-card">
-      <template #header>
-        <div class="card-header">
-          <h2>Torn RW 分箱器</h2>
-        </div>
-      </template>
-      <p>给假赛计算按比例分箱子的最小现金方案</p>
-      <el-form :model="form" label-width="120px">
-        <el-form-item label="API Key">
-          <el-input v-model="form.apiKey" placeholder="请输入您的Torn API Key" show-password />
-        </el-form-item>
-        <el-form-item label="RW War ID">
-          <el-input v-model="form.warId" placeholder="请输入RW War ID" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="analyzeWar" :loading="loading">分析</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <!-- 新增的Faction Attacks分析卡片 -->
-    <el-card class="attacks-card">
-      <template #header>
-        <div class="card-header">
-          <h2>RW丢分分析</h2>
-        </div>
-      </template>
-      <p>根据目前的住院情况，计算RW双方各自无缝被刷会丢多少分。（注：这里只能计算你自己帮派正在进行的RW！）</p>
-      <el-form :model="attacksForm" label-width="120px">
-        <el-form-item label="API Key">
-          <el-input v-model="attacksForm.apiKey" placeholder="请输入您的Torn API Key" show-password />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="fetchAttackData" :loading="attacksLoading">获取当前战争数据</el-button>
-        </el-form-item>
-      </el-form>
-
-      <div v-if="attacksData">
-        <el-alert 
-          title="数据获取成功" 
-          type="success" 
-          :closable="false" 
-          style="margin-bottom: 20px"
-        >
-          <template #default>
-            <p>我方帮派: {{ attacksData.ourFaction.name }}</p>
-            <p>对方帮派: {{ attacksData.opponentFaction.name }}</p>
-            <p>战争开始时间: {{ formatDate(attacksData.startTimestamp) }}</p>
-            <p>攻击记录数: {{ attacksData.attacksCount }}</p>
-          </template>
-        </el-alert>
-        
-        <el-divider content-position="center">预测计算</el-divider>
-        
-        <el-form :model="hoursForm" label-width="180px">
-          <el-form-item label="预测多少小时后">
-            <el-input-number v-model="hoursForm.hours" :min="0" :precision="1" :step="0.5" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="calculateAttackPotential">计算预测</el-button>
+  <div class="app-container">
+    <!-- 侧边栏 -->
+    <el-aside class="sidebar" width="280px">
+      <div class="sidebar-header">
+        <h1>Torn RW 工具箱</h1>
+      </div>
+      
+      <!-- API Key 输入 -->
+      <div class="api-key-section">
+        <el-form label-position="top">
+          <el-form-item label="API Key">
+            <el-input 
+              v-model="globalApiKey" 
+              placeholder="请输入您的Torn API Key" 
+              show-password 
+              size="small"
+            />
           </el-form-item>
         </el-form>
       </div>
 
-      <div v-if="attacksLoading && !attacksData">
-        <el-progress 
-          :percentage="100" 
-          status="active" 
-          :indeterminate="true" 
-          :duration="3" 
-          :stroke-width="15"
-          style="margin: 20px 0"
-        ></el-progress>
-        <p class="load-message">{{ attacksError || '正在获取数据，请耐心等待...' }}</p>
-      </div>
+      <!-- 导航菜单 -->
+      <el-menu 
+        :default-active="activeMenu" 
+        class="sidebar-menu"
+        @select="handleMenuSelect"
+      >
+        <el-menu-item index="split">
+          <el-icon><Box /></el-icon>
+          <span>RW 分箱器</span>
+        </el-menu-item>
+        <el-menu-item index="attacks">
+          <el-icon><Operation /></el-icon>
+          <span>RW 丢分分析</span>
+        </el-menu-item>
+        <el-menu-item index="chains">
+          <el-icon><Link /></el-icon>
+          <span>Chain 查看器</span>
+        </el-menu-item>
+      </el-menu>
+    </el-aside>
 
-      <div v-if="attacksResult" class="attacks-result">
-        <el-divider content-position="center">预测结果</el-divider>
-        
-        <el-descriptions title="我方帮派" :column="1" border>
-          <el-descriptions-item label="总丢分">{{ attacksResult.ourFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
-          <el-descriptions-item label="成员详情">
-            <el-table :data="attacksResult.ourMembers" stripe style="width: 100%">
-              <el-table-column prop="name" label="成员" width="150" />
-              <el-table-column prop="status" label="状态" width="100" />
-              <el-table-column prop="attackCount" label="可被攻击次数" width="130" />
-              <el-table-column prop="avgRespect" label="平均丢分" width="130" />
-              <el-table-column prop="totalLoss" label="总丢分" width="100" />
-            </el-table>
-          </el-descriptions-item>
-        </el-descriptions>
-        
-        <el-descriptions style="margin-top: 20px" title="对方帮派" :column="1" border>
-          <el-descriptions-item label="总丢分">{{ attacksResult.opponentFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
-          <el-descriptions-item label="成员详情">
-            <el-table :data="attacksResult.opponentMembers" stripe style="width: 100%">
-              <el-table-column prop="name" label="成员" width="150" />
-              <el-table-column prop="status" label="状态" width="100" />
-              <el-table-column prop="attackCount" label="可被攻击次数" width="130" />
-              <el-table-column prop="avgRespect" label="平均丢分" width="130" />
-              <el-table-column prop="totalLoss" label="总丢分" width="100" />
-            </el-table>
-          </el-descriptions-item>
-        </el-descriptions>
-      </div>
-
-      <el-alert 
-        v-if="attacksError" 
-        :title="attacksError" 
-        type="error" 
-        show-icon
-        style="margin-top: 20px"
-      />
-    </el-card>
-
-    <!-- Chain分析组件 -->
-    <ChainAnalyzer />
-
-    <el-card v-if="warData" class="result-card">
-      <template #header>
-        <div class="card-header">
-          <h3>战争分析结果</h3>
-        </div>
-      </template>
-      <div class="war-info">
-        <h4>基本信息</h4>
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="战争状态">{{ warData.status }}</el-descriptions-item>
-          <el-descriptions-item label="开始时间">{{ formatDate(warData.start) }}</el-descriptions-item>
-        </el-descriptions>
-        
-        <div class="price-settings">
-          <h4>价格设置</h4>
-          <el-form :model="priceSettings" label-width="180px">
-            <el-form-item label="Small Arms Cache 价格">
-              <el-input-number v-model="priceSettings.small" :min="0" @change="recalculateValues" />
+    <!-- 主内容区域 -->
+    <el-main class="main-content">
+      <!-- RW 分箱器 -->
+      <div v-if="activeMenu === 'split'" class="content-section">
+        <el-card class="function-card">
+          <template #header>
+            <div class="card-header">
+              <h2>Torn RW 分箱器</h2>
+            </div>
+          </template>
+          <p>给假赛计算按比例分箱子的最小现金方案</p>
+          <el-form :model="form" label-width="120px">
+            <el-form-item label="RW War ID">
+              <el-input v-model="form.warId" placeholder="请输入RW War ID" />
             </el-form-item>
-            <el-form-item label="Medium Arms Cache 价格">
-              <el-input-number v-model="priceSettings.medium" :min="0" @change="recalculateValues" />
-            </el-form-item>
-            <el-form-item label="Heavy Arms Cache 价格">
-              <el-input-number v-model="priceSettings.heavy" :min="0" @change="recalculateValues" />
-            </el-form-item>
-            <el-form-item label="Armor Cache 价格">
-              <el-input-number v-model="priceSettings.armor" :min="0" @change="recalculateValues" />
-            </el-form-item>
-            <el-form-item label="Melee Cache 价格">
-              <el-input-number v-model="priceSettings.melee" :min="0" @change="recalculateValues" />
-            </el-form-item>
-            <el-form-item label="Points 价格">
-              <el-input-number v-model="priceSettings.points" :min="0" @change="recalculateValues" />
+            <el-form-item>
+              <el-button type="primary" @click="analyzeWar" :loading="loading" :disabled="!globalApiKey">
+                分析
+              </el-button>
             </el-form-item>
           </el-form>
-        </div>
-        <div class="faction-details" v-for="faction in warData.factions" :key="faction.id">
-          <h4>{{ faction.name }}</h4>
-          <el-descriptions :column="2" border>
-            <el-descriptions-item label="得分">{{ faction.score }}</el-descriptions-item>
-            <el-descriptions-item label="Caches收益明细">
-              <div v-if="faction.caches">
-                <div v-if="faction.caches.small.quantity > 0">
-                  Small Arms Cache: {{ faction.caches.small.quantity }}个 ({{ formatNumber(faction.caches.small.value) }}$)
-                </div>
-                <div v-if="faction.caches.medium.quantity > 0">
-                  Medium Arms Cache: {{ faction.caches.medium.quantity }}个 ({{ formatNumber(faction.caches.medium.value) }}$)
-                </div>
-                <div v-if="faction.caches.heavy.quantity > 0">
-                  Heavy Arms Cache: {{ faction.caches.heavy.quantity }}个 ({{ formatNumber(faction.caches.heavy.value) }}$)
-                </div>
-                <div v-if="faction.caches.armor.quantity > 0">
-                  Armor Cache: {{ faction.caches.armor.quantity }}个 ({{ formatNumber(faction.caches.armor.value) }}$)
-                </div>
-                <div v-if="faction.caches.melee.quantity > 0">
-                  Melee Cache: {{ faction.caches.melee.quantity }}个 ({{ formatNumber(faction.caches.melee.value) }}$)
-                </div>
-                <div>总计: {{ formatNumber(faction.cacheValue) }}$</div>
-              </div>
-              <div v-else>无</div>
-            </el-descriptions-item>
-            <el-descriptions-item label="Points收益">
-              {{ formatNumber(faction.pointsValue) }} $
-            </el-descriptions-item>
-            <el-descriptions-item label="总收益">
-              {{ formatNumber(faction.totalValue) }} $
-            </el-descriptions-item>
-          </el-descriptions>
-        </div>
-      </div>
-    </el-card>
 
-    <el-card v-if="warData && warData.factions.length === 2" class="reward-split-card">
-      <template #header>
-        <div class="card-header">
-          <h3>奖励划分</h3>
-        </div>
-      </template>
-      
-      <el-form :model="splitForm" label-width="120px">
-        <el-form-item :label="warData.factions[0].name + ' 比例'">
-          <el-input-number 
-            v-model="splitForm.faction1Ratio" 
-            :min="0" 
-            :max="100" 
-            @change="handleRatioChange(0)"
-          />
-        </el-form-item>
-        <el-form-item :label="warData.factions[1].name + ' 比例'">
-          <el-input-number 
-            v-model="splitForm.faction2Ratio" 
-            :min="0" 
-            :max="100" 
-            @change="handleRatioChange(1)"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="calculateSplit" :disabled="!isValidRatio">划分奖励</el-button>
-        </el-form-item>
-      </el-form>
-
-      <div v-if="splitResult" class="split-result">
-        <h4>划分结果</h4>
-        <div v-if="splitResult.transfers.length > 0">
-          <div v-for="(transfer, index) in splitResult.transfers" :key="index" class="transfer-item">
-            <p>{{ transfer.from }} 需要转移给 {{ transfer.to }}:</p>
-            <template v-if="transfer.caches">
-              <div v-for="cache in transfer.caches" :key="cache.type">
-                {{ cache.name }}: {{ cache.quantity }}个
+          <!-- 分析结果 -->
+          <div v-if="warData" class="war-results">
+            <div class="war-info">
+              <h4>基本信息</h4>
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="战争状态">{{ warData.status }}</el-descriptions-item>
+                <el-descriptions-item label="开始时间">{{ formatDate(warData.start) }}</el-descriptions-item>
+              </el-descriptions>
+              
+              <div class="price-settings">
+                <h4>价格设置</h4>
+                <el-form :model="priceSettings" label-width="180px">
+                  <el-form-item label="Small Arms Cache 价格">
+                    <el-input-number v-model="priceSettings.small" :min="0" @change="recalculateValues" />
+                  </el-form-item>
+                  <el-form-item label="Medium Arms Cache 价格">
+                    <el-input-number v-model="priceSettings.medium" :min="0" @change="recalculateValues" />
+                  </el-form-item>
+                  <el-form-item label="Heavy Arms Cache 价格">
+                    <el-input-number v-model="priceSettings.heavy" :min="0" @change="recalculateValues" />
+                  </el-form-item>
+                  <el-form-item label="Armor Cache 价格">
+                    <el-input-number v-model="priceSettings.armor" :min="0" @change="recalculateValues" />
+                  </el-form-item>
+                  <el-form-item label="Melee Cache 价格">
+                    <el-input-number v-model="priceSettings.melee" :min="0" @change="recalculateValues" />
+                  </el-form-item>
+                  <el-form-item label="Points 价格">
+                    <el-input-number v-model="priceSettings.points" :min="0" @change="recalculateValues" />
+                  </el-form-item>
+                </el-form>
               </div>
-            </template>
-            <div v-if="transfer.cash > 0">现金: {{ formatNumber(transfer.cash) }}$</div>
+              
+              <div class="faction-details" v-for="faction in warData.factions" :key="faction.id">
+                <h4>{{ faction.name }}</h4>
+                <el-descriptions :column="2" border>
+                  <el-descriptions-item label="得分">{{ faction.score }}</el-descriptions-item>
+                  <el-descriptions-item label="Caches收益明细">
+                    <div v-if="faction.caches">
+                      <div v-if="faction.caches.small.quantity > 0">
+                        Small Arms Cache: {{ faction.caches.small.quantity }}个 ({{ formatNumber(faction.caches.small.value) }}$)
+                      </div>
+                      <div v-if="faction.caches.medium.quantity > 0">
+                        Medium Arms Cache: {{ faction.caches.medium.quantity }}个 ({{ formatNumber(faction.caches.medium.value) }}$)
+                      </div>
+                      <div v-if="faction.caches.heavy.quantity > 0">
+                        Heavy Arms Cache: {{ faction.caches.heavy.quantity }}个 ({{ formatNumber(faction.caches.heavy.value) }}$)
+                      </div>
+                      <div v-if="faction.caches.armor.quantity > 0">
+                        Armor Cache: {{ faction.caches.armor.quantity }}个 ({{ formatNumber(faction.caches.armor.value) }}$)
+                      </div>
+                      <div v-if="faction.caches.melee.quantity > 0">
+                        Melee Cache: {{ faction.caches.melee.quantity }}个 ({{ formatNumber(faction.caches.melee.value) }}$)
+                      </div>
+                      <div>总计: {{ formatNumber(faction.cacheValue) }}$</div>
+                    </div>
+                    <div v-else>无</div>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="Points收益">
+                    {{ formatNumber(faction.pointsValue) }} $
+                  </el-descriptions-item>
+                  <el-descriptions-item label="总收益">
+                    {{ formatNumber(faction.totalValue) }} $
+                  </el-descriptions-item>
+                </el-descriptions>
+              </div>
+            </div>
+
+            <!-- 奖励划分 -->
+            <div v-if="warData.factions.length === 2" class="reward-split">
+              <h4>奖励划分</h4>
+              <el-form :model="splitForm" label-width="120px">
+                <el-form-item :label="warData.factions[0].name + ' 比例'">
+                  <el-input-number 
+                    v-model="splitForm.faction1Ratio" 
+                    :min="0" 
+                    :max="100" 
+                    @change="handleRatioChange(0)"
+                  />
+                </el-form-item>
+                <el-form-item :label="warData.factions[1].name + ' 比例'">
+                  <el-input-number 
+                    v-model="splitForm.faction2Ratio" 
+                    :min="0" 
+                    :max="100" 
+                    @change="handleRatioChange(1)"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="calculateSplit" :disabled="!isValidRatio">划分奖励</el-button>
+                </el-form-item>
+              </el-form>
+
+              <div v-if="splitResult" class="split-result">
+                <h4>划分结果</h4>
+                <div v-if="splitResult.transfers.length > 0">
+                  <div v-for="(transfer, index) in splitResult.transfers" :key="index" class="transfer-item">
+                    <p>{{ transfer.from }} 需要转移给 {{ transfer.to }}:</p>
+                    <template v-if="transfer.caches">
+                      <div v-for="cache in transfer.caches" :key="cache.type">
+                        {{ cache.name }}: {{ cache.quantity }}个
+                      </div>
+                    </template>
+                    <div v-if="transfer.cash > 0">现金: {{ formatNumber(transfer.cash) }}$</div>
+                  </div>
+                </div>
+                <div v-else>
+                  <p>当前奖励分配已经符合目标比例，无需转移</p>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div v-else>
-          <p>当前奖励分配已经符合目标比例，无需转移</p>
-        </div>
-      </div>
-    </el-card>
 
-    <el-card v-if="error" class="error-card">
-      <template #header>
-        <div class="card-header">
-          <h3>错误信息</h3>
-        </div>
-      </template>
-      <p class="error-message">{{ error }}</p>
-    </el-card>
+          <!-- 错误信息 -->
+          <el-alert 
+            v-if="error" 
+            :title="error" 
+            type="error" 
+            show-icon
+            style="margin-top: 20px"
+          />
+        </el-card>
+      </div>
+
+      <!-- RW 丢分分析 -->
+      <div v-if="activeMenu === 'attacks'" class="content-section">
+        <el-card class="function-card">
+          <template #header>
+            <div class="card-header">
+              <h2>RW丢分分析</h2>
+            </div>
+          </template>
+          <p>根据目前的住院情况，计算RW双方各自无缝被刷会丢多少分。（注：这里只能计算你自己帮派正在进行的RW！）</p>
+          
+          <el-form>
+            <el-form-item>
+              <el-button type="primary" @click="fetchAttackData" :loading="attacksLoading" :disabled="!globalApiKey">
+                获取当前战争数据
+              </el-button>
+            </el-form-item>
+          </el-form>
+
+          <div v-if="attacksData">
+            <el-alert 
+              title="数据获取成功" 
+              type="success" 
+              :closable="false" 
+              style="margin-bottom: 20px"
+            >
+              <template #default>
+                <p>我方帮派: {{ attacksData.ourFaction.name }}</p>
+                <p>对方帮派: {{ attacksData.opponentFaction.name }}</p>
+                <p>战争开始时间: {{ formatDate(attacksData.startTimestamp) }}</p>
+                <p>攻击记录数: {{ attacksData.attacksCount }}</p>
+              </template>
+            </el-alert>
+            
+            <el-divider content-position="center">预测计算</el-divider>
+            
+            <el-form :model="hoursForm" label-width="180px">
+              <el-form-item label="预测多少小时后">
+                <el-input-number v-model="hoursForm.hours" :min="0" :precision="1" :step="0.5" />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" @click="calculateAttackPotential">计算预测</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <div v-if="attacksLoading && !attacksData">
+            <el-progress 
+              :percentage="100" 
+              status="active" 
+              :indeterminate="true" 
+              :duration="3" 
+              :stroke-width="15"
+              style="margin: 20px 0"
+            />
+            <p class="load-message">{{ attacksError || '正在获取数据，请耐心等待...' }}</p>
+          </div>
+
+          <div v-if="attacksResult" class="attacks-result">
+            <el-divider content-position="center">预测结果</el-divider>
+            
+            <el-descriptions title="我方帮派" :column="1" border>
+              <el-descriptions-item label="总丢分">{{ attacksResult.ourFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
+              <el-descriptions-item label="成员详情">
+                <el-table :data="attacksResult.ourMembers" stripe style="width: 100%">
+                  <el-table-column prop="name" label="成员" width="150" />
+                  <el-table-column prop="status" label="状态" width="100" />
+                  <el-table-column prop="attackCount" label="可被攻击次数" width="130" />
+                  <el-table-column prop="avgRespect" label="平均丢分" width="130" />
+                  <el-table-column prop="totalLoss" label="总丢分" width="100" />
+                </el-table>
+              </el-descriptions-item>
+            </el-descriptions>
+            
+            <el-descriptions style="margin-top: 20px" title="对方帮派" :column="1" border>
+              <el-descriptions-item label="总丢分">{{ attacksResult.opponentFactionTotalLoss.toFixed(2) }}</el-descriptions-item>
+              <el-descriptions-item label="成员详情">
+                <el-table :data="attacksResult.opponentMembers" stripe style="width: 100%">
+                  <el-table-column prop="name" label="成员" width="150" />
+                  <el-table-column prop="status" label="状态" width="100" />
+                  <el-table-column prop="attackCount" label="可被攻击次数" width="130" />
+                  <el-table-column prop="avgRespect" label="平均丢分" width="130" />
+                  <el-table-column prop="totalLoss" label="总丢分" width="100" />
+                </el-table>
+              </el-descriptions-item>
+            </el-descriptions>
+          </div>
+
+          <el-alert 
+            v-if="attacksError" 
+            :title="attacksError" 
+            type="error" 
+            show-icon
+            style="margin-top: 20px"
+          />
+        </el-card>
+      </div>
+
+      <!-- Chain 查看器 -->
+      <div v-if="activeMenu === 'chains'" class="content-section">
+        <ChainAnalyzer :api-key="globalApiKey" />
+      </div>
+    </el-main>
   </div>
 </template>
 
@@ -253,9 +296,14 @@
 import { ref, reactive, computed, watch } from 'vue'
 import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
+import { Box, Operation, Link } from '@element-plus/icons-vue'
 
+// 全局状态
+const globalApiKey = ref('')
+const activeMenu = ref('split')
+
+// 原有的状态变量
 const form = reactive({
-  apiKey: '',
   warId: ''
 })
 
@@ -274,8 +322,26 @@ const priceSettings = reactive({
   heavy: 0,
   armor: 0,
   melee: 0,
-  points: 0 // Will be updated in analyzeWar
+  points: 0
 })
+
+// 攻击分析相关变量
+const hoursForm = reactive({
+  hours: 1
+})
+
+const attacksLoading = ref(false)
+const attacksError = ref(null)
+const attacksData = ref(null)
+const attacksResult = ref(null)
+
+// 菜单选择处理
+const handleMenuSelect = (index) => {
+  activeMenu.value = index
+  // 清除之前的错误信息
+  error.value = null
+  attacksError.value = null
+}
 
 const recalculateValues = () => {
   if (!warData.value) return;
@@ -483,7 +549,7 @@ const calculateSplit = () => {
 };
 
 const analyzeWar = async () => {
-  if (!form.apiKey || !form.warId) {
+  if (!globalApiKey.value || !form.warId) {
     error.value = '请填写API Key和War ID'
     return
   }
@@ -494,15 +560,15 @@ const analyzeWar = async () => {
   try {
     // 获取RW信息
     const warResponse = await axios.get(
-      `https://api.torn.com/v2/faction/${form.warId}/rankedwarreport?key=${form.apiKey}`
+      `https://api.torn.com/v2/faction/${form.warId}/rankedwarreport?key=${globalApiKey.value}`
     )
     // 获取物品价格信息
     const itemsResponse = await axios.get(
-      `https://api.torn.com/v2/torn/items?cat=Supply%20Pack&sort=ASC&key=${form.apiKey}`
+      `https://api.torn.com/v2/torn/items?cat=Supply%20Pack&sort=ASC&key=${globalApiKey.value}`
     )
     // 获取points市场价格信息
     const pointsResponse = await axios.get(
-      `https://api.torn.com/v2/market?selections=pointsmarket&sort=DESC&key=${form.apiKey}`
+      `https://api.torn.com/v2/market?selections=pointsmarket&sort=DESC&key=${globalApiKey.value}`
     )
     const warInfo = warResponse.data.rankedwarreport
     const itemPrices = itemsResponse.data.items
@@ -584,23 +650,9 @@ const analyzeWar = async () => {
   }
 }
 
-// 新增的攻击分析相关变量
-const attacksForm = reactive({
-  apiKey: ''
-})
-
-const hoursForm = reactive({
-  hours: 1
-})
-
-const attacksLoading = ref(false)
-const attacksError = ref(null)
-const attacksData = ref(null)
-const attacksResult = ref(null)
-
 // 获取战争攻击数据
 const fetchAttackData = async () => {
-  if (!attacksForm.apiKey) {
+  if (!globalApiKey.value) {
     attacksError.value = '请填写API Key'
     return
   }
@@ -613,7 +665,7 @@ const fetchAttackData = async () => {
   try {
     // 1. 获取用户信息，确定用户当前帮派
     const userResponse = await axios.get(
-      `https://api.torn.com/v2/user?key=${attacksForm.apiKey}`
+      `https://api.torn.com/v2/user?key=${globalApiKey.value}`
     )
     
     const userData = userResponse.data
@@ -626,7 +678,7 @@ const fetchAttackData = async () => {
     
     // 2. 获取最新的ranked war
     const rankedWarsResponse = await axios.get(
-      `https://api.torn.com/v2/faction/${userFactionId}/rankedwars?key=${attacksForm.apiKey}`
+      `https://api.torn.com/v2/faction/${userFactionId}/rankedwars?key=${globalApiKey.value}`
     )
     
     const rankedWarsData = rankedWarsResponse.data
@@ -658,11 +710,11 @@ const fetchAttackData = async () => {
     
     // 3. 获取双方帮派成员
     const ourFactionResponse = await axios.get(
-      `https://api.torn.com/v2/faction/${userFactionId}/members?key=${attacksForm.apiKey}`
+      `https://api.torn.com/v2/faction/${userFactionId}/members?key=${globalApiKey.value}`
     )
     
     const opponentFactionResponse = await axios.get(
-      `https://api.torn.com/v2/faction/${opponentFactionId}/members?key=${attacksForm.apiKey}`
+      `https://api.torn.com/v2/faction/${opponentFactionId}/members?key=${globalApiKey.value}`
     )
     
     const ourFactionMembers = ourFactionResponse.data.members
@@ -683,7 +735,7 @@ const fetchAttackData = async () => {
         attacksError.value = `正在获取从 ${formatDate(currentTimestamp)} 开始的攻击记录...`
         
         const attacksResponse = await axios.get(
-          `https://api.torn.com/v2/faction/attacksfull?from=${currentTimestamp}&sort=ASC&key=${attacksForm.apiKey}`
+          `https://api.torn.com/v2/faction/attacksfull?from=${currentTimestamp}&sort=ASC&key=${globalApiKey.value}`
         )
         
         const attacks = Object.values(attacksResponse.data.attacks || {})
@@ -881,30 +933,61 @@ const calculateAverageRespect = (attacks, memberId, opponentFactionId) => {
   console.log(`用户ID ${memberId} 的平均丢分: ${avgRespect.toFixed(2)}`)
   return avgRespect
 }
-
-// 监视API Key变化并同步
-watch(() => form.apiKey, (newVal) => {
-  attacksForm.apiKey = newVal;
-});
-
-watch(() => attacksForm.apiKey, (newVal) => {
-  form.apiKey = newVal;
-});
 </script>
 
 <style scoped>
-.container {
-  max-width: 800px;
-  margin: 20px auto;
-  padding: 0 20px;
+.app-container {
+  display: flex;
+  min-height: 100vh;
+  background-color: #f5f7fa;
 }
 
-.input-card,
-.result-card,
-.error-card,
-.reward-split-card,
-.attacks-card {
-  margin-bottom: 20px;
+.sidebar {
+  background-color: #fff;
+  padding: 20px;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+  border-right: 1px solid #e4e7ed;
+}
+
+.sidebar-header {
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+.sidebar-header h1 {
+  color: #409eff;
+  margin: 0;
+  font-size: 20px;
+}
+
+.api-key-section {
+  margin-bottom: 30px;
+  padding: 15px;
+  background-color: #f9f9fb;
+  border-radius: 8px;
+  border: 1px solid #e9e9eb;
+}
+
+.sidebar-menu {
+  width: 100%;
+  border: none;
+}
+
+.main-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.content-section {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.function-card {
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
 }
 
 .card-header {
@@ -913,18 +996,67 @@ watch(() => attacksForm.apiKey, (newVal) => {
   align-items: center;
 }
 
+.war-results {
+  margin-top: 20px;
+}
+
+.war-info {
+  margin-bottom: 20px;
+}
+
+.price-settings {
+  margin: 20px 0;
+  padding: 20px;
+  background-color: #f9f9fb;
+  border-radius: 8px;
+}
+
+.price-settings .el-input-number {
+  width: 100%;
+}
+
 .faction-details {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid #eee;
 }
 
-.price-settings .el-input-number {
-  width: 100%; /* Increase width by 100% (double the default) */
+.reward-split {
+  margin-top: 20px;
+  padding: 20px;
+  background-color: #f9f9fb;
+  border-radius: 8px;
+  border-top: 1px solid #eee;
+}
+
+.split-result {
+  margin-top: 15px;
+  padding: 15px;
+  background-color: #fff;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
+}
+
+.transfer-item {
+  padding: 10px;
+  margin-bottom: 10px;
+  background-color: #f0f9ff;
+  border-radius: 6px;
+  border-left: 4px solid #409eff;
 }
 
 .error-message {
   color: #f56c6c;
+}
+
+.load-message {
+  text-align: center;
+  color: #909399;
+  margin: 10px 0;
+}
+
+.attacks-result {
+  margin-top: 20px;
 }
 
 h2, h3, h4 {
