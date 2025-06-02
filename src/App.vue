@@ -115,6 +115,9 @@
       />
     </el-card>
 
+    <!-- Chain分析组件 -->
+    <ChainAnalyzer />
+
     <el-card v-if="warData" class="result-card">
       <template #header>
         <div class="card-header">
@@ -249,6 +252,7 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import axios from 'axios'
+import ChainAnalyzer from './components/ChainAnalyzer.vue'
 
 const form = reactive({
   apiKey: '',
