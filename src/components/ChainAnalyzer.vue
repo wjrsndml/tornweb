@@ -59,6 +59,18 @@
         <el-descriptions-item label="战争结束时间">
           {{ formatTimestamp(warDetails.end) }}
         </el-descriptions-item>
+        <el-descriptions-item label="Ranked War 链接" :span="2">
+          <el-link 
+            type="primary" 
+            :href="`https://www.torn.com/war.php?step=rankreport&rankID=${form.rankedWarId}`" 
+            target="_blank"
+            :underline="false"
+            style="font-size: 14px;"
+          >
+            <el-icon style="margin-right: 5px;"><Link /></el-icon>
+            查看完整 Ranked War 报告 (ID: {{ form.rankedWarId }})
+          </el-link>
+        </el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -103,6 +115,18 @@
                   </el-descriptions-item>
                   <el-descriptions-item label="参与成员">
                     {{ chain.details.members }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="Chain 报告链接" :span="2">
+                    <el-link 
+                      type="primary" 
+                      :href="`https://www.torn.com/war.php?step=chainreport&chainID=${chain.id}`" 
+                      target="_blank"
+                      :underline="false"
+                      style="font-size: 13px;"
+                    >
+                      <el-icon style="margin-right: 5px;"><Link /></el-icon>
+                      查看完整 Chain 报告 (ID: {{ chain.id }})
+                    </el-link>
                   </el-descriptions-item>
                 </el-descriptions>
 
@@ -262,6 +286,7 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import axios from 'axios'
+import { Link } from '@element-plus/icons-vue'
 
 const props = defineProps({
   apiKey: {

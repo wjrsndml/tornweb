@@ -43,3 +43,6 @@ cypress/screenshots/
 
 # Storybook
 storybook-static
+
+.pytest_cache
+.vscode
