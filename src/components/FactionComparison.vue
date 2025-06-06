@@ -220,12 +220,37 @@
             </el-col>
           </el-row>
           <div class="analysis-text">
-            <el-alert 
-              :title="comparisonResult.winRatePrediction.analysis"
-              type="info"
-              :closable="false"
-              show-icon
-            />
+            <el-card>
+              <template #header>
+                <h4>详细分析</h4>
+              </template>
+              <div class="analysis-details">
+                <el-row :gutter="20">
+                  <el-col :span="12">
+                    <div class="faction-analysis">
+                      <h5>{{ comparisonResult.winRatePrediction.analysisData.faction1.name }}</h5>
+                      <ul>
+                        <li>平均BS: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.averageBS }}</strong></li>
+                        <li>活跃度分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.activityScore }}</strong></li>
+                        <li>成员数量: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.memberCount }}</strong> 人</li>
+                        <li>综合评分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.score }}</strong></li>
+                      </ul>
+                    </div>
+                  </el-col>
+                  <el-col :span="12">
+                    <div class="faction-analysis">
+                      <h5>{{ comparisonResult.winRatePrediction.analysisData.faction2.name }}</h5>
+                      <ul>
+                        <li>平均BS: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.averageBS }}</strong></li>
+                        <li>活跃度分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.activityScore }}</strong></li>
+                        <li>成员数量: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.memberCount }}</strong> 人</li>
+                        <li>综合评分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.score }}</strong></li>
+                      </ul>
+                    </div>
+                  </el-col>
+                </el-row>
+              </div>
+            </el-card>
           </div>
         </div>
       </el-card>
@@ -242,8 +267,10 @@
           <el-table :data="[
             {
               metric: '平均BS',
-              faction1: Math.round(comparisonResult.faction1Analysis.averageBS),
-              faction2: Math.round(comparisonResult.faction2Analysis.averageBS)
+              faction1: formatBSValue(Math.round(comparisonResult.faction1Analysis.averageBS)),
+              faction2: formatBSValue(Math.round(comparisonResult.faction2Analysis.averageBS)),
+              faction1Raw: Math.round(comparisonResult.faction1Analysis.averageBS),
+              faction2Raw: Math.round(comparisonResult.faction2Analysis.averageBS)
             },
             {
               metric: '四个月平均开枪数',
@@ -269,14 +296,14 @@
             <el-table-column prop="metric" label="指标" width="200" />
             <el-table-column :label="comparisonResult.faction1.name" align="center">
               <template #default="{ row }">
-                <span :style="{ color: row.faction1 > row.faction2 ? '#67c23a' : '#909399' }">
+                <span :style="{ color: (row.faction1Raw || row.faction1) > (row.faction2Raw || row.faction2) ? '#67c23a' : '#909399' }">
                   {{ row.faction1 }}
                 </span>
               </template>
             </el-table-column>
             <el-table-column :label="comparisonResult.faction2.name" align="center">
               <template #default="{ row }">
-                <span :style="{ color: row.faction2 > row.faction1 ? '#67c23a' : '#909399' }">
+                <span :style="{ color: (row.faction2Raw || row.faction2) > (row.faction1Raw || row.faction1) ? '#67c23a' : '#909399' }">
                   {{ row.faction2 }}
                 </span>
               </template>
@@ -303,7 +330,7 @@
                 <el-table-column prop="estimatedBS" label="预估BS" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
-                      {{ row.estimatedBS.toLocaleString() }}
+                      {{ formatBSValue(row.estimatedBS) }}
                     </el-tag>
                   </template>
                 </el-table-column>
@@ -355,7 +382,7 @@
                 <el-table-column prop="estimatedBS" label="预估BS" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
-                      {{ row.estimatedBS.toLocaleString() }}
+                      {{ formatBSValue(row.estimatedBS) }}
                     </el-tag>
                   </template>
                 </el-table-column>
@@ -440,20 +467,14 @@ const RATE_LIMIT_INTERVAL = 60000 // 1分钟
 // BS预测算法常量
 const BS_CONSTANTS = {
   L: [2, 2.8, 3.2, 3.2, 3.6, 3.8, 3.7, 4, 4.8, 4.8, 5.2, 5.2, 5.4, 5.8, 5.8, 6, 6.4, 6.6, 6.8, 7, 7, 7, 7, 7.3, 8],
-  W: [200, 500, 1000, 2000, 2750, 3000, 3500, 4000, 6000, 7000, 8000, 11000, 12420, 18000, 18100, 24140, 31260, 36610, 46640, 56520, 67775, 84535, 106305, 100000, Number.MAX_SAFE_INTEGER],
-  J: [2, 6, 11, 26, 31, 50, 71, 100],
-  K: [100, 5000, 10000, 20000, 30000, 50000],
-  V: [5000000, 50000000, 500000000, 5000000000, 50000000000],
-  B: [2000, 20000, 200000, 2000000, 20000000, 200000000],
-  R: [2500, 25000, 250000, 2500000, 35000000, 250000000],
-  Y: {
-    "Absolute beginner": 1, "Beginner": 2, "Inexperienced": 3, "Rookie": 4,
-    "Novice": 5, "Below average": 6, "Average": 7, "Reasonable": 8,
-    "Above average": 9, "Competent": 10, "Highly competent": 11,
-    "Veteran": 12, "Distinguished": 13, "Highly distinguished": 14,
-    "Professional": 15, "Star": 16, "Master": 17, "Outstanding": 18,
-    "Celebrity": 19, "Supreme": 20, "Idolised": 21, "Champion": 22,
-    "Heroic": 23, "Legendary": 24, "Elite": 25, "Invincible": 26
+  W: [200, 500, 1000, 2000, 2750, 3000, 3500, 4000, 6000, 7000, 8000, 11000, 12420, 18000, 18100, 24140, 31260, 36610, 46640, 56520, 67775, 84535, 106305, 100000, Infinity],
+  E: [5, 5, 5, 5, 5, 5, 10, 10, 10, 10, 10, 10, 25, 25, 25, 25, 25, 25, 25, 50, 50, 50, 50, 50, 50], // 每个健身房的能量消耗
+  // 新训练公式的属性特定常数
+  STAT_CONSTANTS: {
+    strength: { A: 1600, B: 1700, C: 700 },
+    speed: { A: 1600, B: 2000, C: 1350 },
+    dexterity: { A: 1800, B: 1500, C: 1000 },
+    defense: { A: 2100, B: -600, C: 1500 }
   }
 }
 
@@ -723,30 +744,353 @@ const copyCacheData = () => {
   }
 }
 
-// BS预测算法实现
+// 使用旧版训练公式计算单次训练增益（2022年8月2日之前）
+const calculateTrainingGainOld = (currentStats, happy, gymLevel, energyPerTrain, statType = 'strength') => {
+  // 获取属性特定常数
+  const statConstants = BS_CONSTANTS.STAT_CONSTANTS[statType]
+  const A = statConstants.A
+  const B = statConstants.B
+  
+  // S: 旧版硬上限50m
+  const S = currentStats <= 50000000 ? currentStats : 50000000
+  
+  // H: 当前快乐值
+  const H = Math.max(0, Math.min(happy, 99999))
+  
+  // G: 健身房点数
+  const G = BS_CONSTANTS.L[gymLevel]
+  
+  // E: 每次训练消耗的能量
+  const E = energyPerTrain
+  
+  // 旧版公式的各个部分
+  const lnTerm = Math.log(1 + H/250)
+  const roundedLn = Math.round(lnTerm * 10000) / 10000 // 四位小数
+  const multiplier = Math.round((1 + 0.07 * roundedLn) * 10000) / 10000 // 四位小数
+  const statComponent = S * multiplier
+  
+  const happyComponent = 8 * Math.pow(H, 1.05)
+  const happyAdjustment = H < 99999 ? (1 - Math.pow(H/99999, 2)) * A : 0
+  
+  const baseGain = (statComponent + happyComponent + happyAdjustment + B) * (1/200000) * G * E
+  
+  return Math.max(0, baseGain)
+}
+
+// 使用新版训练公式计算单次训练增益（2022年8月2日之后）
+const calculateTrainingGainNew = (currentStats, happy, gymLevel, energyPerTrain, statType = 'strength') => {
+  // 获取属性特定常数
+  const statConstants = BS_CONSTANTS.STAT_CONSTANTS[statType]
+  const A = statConstants.A
+  const B = statConstants.B
+  
+  // S: 新版公式，超过50m时有对数衰减
+  let S
+  if (currentStats <= 50000000) {
+    S = currentStats
+  } else {
+    S = 50000000 + (currentStats - 50000000) / (8.77635 * Math.log(currentStats))
+  }
+  
+  // H: 当前快乐值
+  const H = Math.max(0, Math.min(happy, 99999))
+  
+  // G: 健身房点数
+  const G = BS_CONSTANTS.L[gymLevel]
+  
+  // E: 每次训练消耗的能量
+  const E = energyPerTrain
+  
+  // 新版公式的各个部分
+  const lnTerm = Math.log(1 + H/250)
+  const roundedLn = Math.round(lnTerm * 10000) / 10000 // 四位小数
+  const multiplier = Math.round((1 + 0.07 * roundedLn) * 10000) / 10000 // 四位小数
+  const statComponent = S * multiplier
+  
+  const happyComponent = 8 * Math.pow(H, 1.05)
+  const happyAdjustment = H < 99999 ? (1 - Math.pow(H/99999, 2)) * A : 0
+  
+  const baseGain = (statComponent + happyComponent + happyAdjustment + B) * (1/200000) * G * E
+  
+  return Math.max(0, baseGain)
+}
+
+// 模拟健身房锻炼（根据账户年龄使用旧版/新版公式）
+const simulateGymTraining = (totalEnergy, stats, profile) => {
+  // 计算能量分配
+  const now = Math.floor(Date.now() / 1000)
+  const formulaChangeDate = Math.floor(new Date('2022-08-02').getTime() / 1000)
+  const accountAge = profile.age || 100
+  const accountCreationTimestamp = now - (accountAge * 86400)
+  
+  let oldEnergy = 0
+  let newEnergy = totalEnergy
+  
+  if (accountCreationTimestamp < formulaChangeDate) {
+    // 账户在公式更新前创建，需要分配能量
+    const daysBeforeChange = (formulaChangeDate - accountCreationTimestamp) / 86400
+    const daysAfterChange = accountAge - daysBeforeChange
+    
+    const oldEnergyRatio = daysBeforeChange / accountAge
+    const newEnergyRatio = daysAfterChange > 0 ? daysAfterChange / accountAge : 0
+    
+    oldEnergy = Math.floor(totalEnergy * oldEnergyRatio)
+    newEnergy = totalEnergy - oldEnergy
+  }
+  
+  // 初始化变量 - 分别跟踪四个属性
+  let strengthStats = 0
+  let speedStats = 0
+  let dexterityStats = 0
+  let defenseStats = 0
+  
+  const currentHappy = 5000 // 恒定快乐值
+  
+  // 属性训练顺序
+  const statTypes = ['strength', 'speed', 'dexterity', 'defense']
+  let currentStatIndex = 0
+  
+  // 初始化健身房状态变量
+  let currentGym = 0
+  let gymCapacityLeft = BS_CONSTANTS.W[0]
+  
+  // 第一阶段：使用旧版公式
+  if (oldEnergy > 0) {
+    let remainingEnergy = oldEnergy
+    
+    while (remainingEnergy > 0 && currentGym < BS_CONSTANTS.L.length) {
+      const energyPerTrain = BS_CONSTANTS.E[currentGym]
+      
+      const maxTrainsByEnergy = Math.floor(remainingEnergy / energyPerTrain)
+      const maxTrainsByCapacity = Math.floor(gymCapacityLeft / energyPerTrain)
+      const actualTrains = Math.min(maxTrainsByEnergy, maxTrainsByCapacity, 10000)
+      
+      if (actualTrains <= 0) break
+      
+      for (let train = 0; train < actualTrains; train++) {
+        if (remainingEnergy < energyPerTrain) break
+        
+        const currentStat = statTypes[currentStatIndex]
+        let currentStatValue
+        
+        if (currentStat === 'strength') currentStatValue = strengthStats
+        else if (currentStat === 'speed') currentStatValue = speedStats
+        else if (currentStat === 'dexterity') currentStatValue = dexterityStats
+        else currentStatValue = defenseStats
+        
+        // 使用旧版公式
+        const gain = calculateTrainingGainOld(
+          currentStatValue,
+          currentHappy,
+          currentGym,
+          energyPerTrain,
+          currentStat
+        )
+        
+        // 更新对应属性的值
+        if (currentStat === 'strength') strengthStats += gain
+        else if (currentStat === 'speed') speedStats += gain
+        else if (currentStat === 'dexterity') dexterityStats += gain
+        else defenseStats += gain
+        
+        remainingEnergy -= energyPerTrain
+        gymCapacityLeft -= energyPerTrain
+        currentStatIndex = (currentStatIndex + 1) % 4
+      }
+      
+      if (gymCapacityLeft <= energyPerTrain && currentGym < BS_CONSTANTS.L.length - 1) {
+        currentGym++
+        gymCapacityLeft = BS_CONSTANTS.W[currentGym]
+      } else if (actualTrains === 0) {
+        break
+      }
+    }
+  }
+  
+  // 第二阶段：使用新版公式
+  if (newEnergy > 0) {
+    let remainingEnergy = newEnergy
+    
+    // 如果第一阶段没有训练，确保健身房状态已正确初始化
+    // （这些变量已经在上面初始化过了）
+    
+    while (remainingEnergy > 0 && currentGym < BS_CONSTANTS.L.length) {
+      const energyPerTrain = BS_CONSTANTS.E[currentGym]
+      
+      const maxTrainsByEnergy = Math.floor(remainingEnergy / energyPerTrain)
+      const maxTrainsByCapacity = Math.floor(gymCapacityLeft / energyPerTrain)
+      const actualTrains = Math.min(maxTrainsByEnergy, maxTrainsByCapacity, 10000)
+      
+      if (actualTrains <= 0) break
+      
+      for (let train = 0; train < actualTrains; train++) {
+        if (remainingEnergy < energyPerTrain) break
+        
+        const currentStat = statTypes[currentStatIndex]
+        let currentStatValue
+        
+        if (currentStat === 'strength') currentStatValue = strengthStats
+        else if (currentStat === 'speed') currentStatValue = speedStats
+        else if (currentStat === 'dexterity') currentStatValue = dexterityStats
+        else currentStatValue = defenseStats
+        
+        // 使用新版公式
+        const gain = calculateTrainingGainNew(
+          currentStatValue,
+          currentHappy,
+          currentGym,
+          energyPerTrain,
+          currentStat
+        )
+        
+        // 更新对应属性的值
+        if (currentStat === 'strength') strengthStats += gain
+        else if (currentStat === 'speed') speedStats += gain
+        else if (currentStat === 'dexterity') dexterityStats += gain
+        else defenseStats += gain
+        
+        remainingEnergy -= energyPerTrain
+        gymCapacityLeft -= energyPerTrain
+        currentStatIndex = (currentStatIndex + 1) % 4
+      }
+      
+      if (gymCapacityLeft <= energyPerTrain && currentGym < BS_CONSTANTS.L.length - 1) {
+        currentGym++
+        gymCapacityLeft = BS_CONSTANTS.W[currentGym]
+      } else if (actualTrains === 0) {
+        break
+      }
+    }
+  }
+  
+  // 计算总属性
+  let totalStats = strengthStats + speedStats + dexterityStats + defenseStats
+  
+  // SE增强剂加成 - 重新实现
+  const statEnhancers = stats.items?.used?.stat_enhancers || 0
+  if (statEnhancers > 0) {
+    // 计算总的SE增长潜力
+    const originalTotal = totalStats
+    const seEnhancedTotal = 0.5 * originalTotal + 0.25 * originalTotal * (1 + 0.85 * (Math.pow(1.01, 0.8 * statEnhancers) - 1)) + 0.25 * originalTotal * (1 + 0.85 * (Math.pow(1.01, 0.2 * statEnhancers) - 1))
+    const totalSeGrowth = seEnhancedTotal - originalTotal
+    
+    // SE分配策略：优先级为力量 → 速度 → 敏捷 → 防御
+    const seCapPerStat = 500000000000000  // 500T
+    const remainingSeCap = 5000000000000   // 5T
+    
+    // 原始属性值（SE前）
+    const originalStrength = strengthStats
+    const originalSpeed = speedStats
+    const originalDexterity = dexterityStats
+    const originalDefense = defenseStats
+    
+    let remainingSeGrowth = totalSeGrowth
+    
+    // 第一优先级：力量
+    if (remainingSeGrowth > 0) {
+      const maxStrengthGrowth = seCapPerStat - originalStrength
+      if (maxStrengthGrowth > 0) {
+        const strengthSeGrowth = Math.min(remainingSeGrowth, maxStrengthGrowth)
+        strengthStats += strengthSeGrowth
+        remainingSeGrowth -= strengthSeGrowth
+      }
+    }
+    
+    // 第二优先级：速度
+    if (remainingSeGrowth > 0) {
+      const maxSpeedGrowth = seCapPerStat - originalSpeed
+      if (maxSpeedGrowth > 0) {
+        const speedSeGrowth = Math.min(remainingSeGrowth, maxSpeedGrowth)
+        speedStats += speedSeGrowth
+        remainingSeGrowth -= speedSeGrowth
+      }
+    }
+    
+    // 第三优先级：敏捷
+    if (remainingSeGrowth > 0) {
+      const maxDexterityGrowth = seCapPerStat - originalDexterity
+      if (maxDexterityGrowth > 0) {
+        const dexteritySeGrowth = Math.min(remainingSeGrowth, maxDexterityGrowth)
+        dexterityStats += dexteritySeGrowth
+        remainingSeGrowth -= dexteritySeGrowth
+      }
+    }
+    
+    // 第四优先级：防御（只能增长5T）
+    if (remainingSeGrowth > 0) {
+      const maxDefenseGrowth = Math.min(remainingSeCap, remainingSeGrowth)
+      defenseStats += maxDefenseGrowth
+      remainingSeGrowth -= maxDefenseGrowth
+    }
+    
+    // 更新总属性
+    totalStats = strengthStats + speedStats + dexterityStats + defenseStats
+  }
+  
+  return Math.floor(totalStats)
+}
+
+// 格式化BS数值显示（k, m, b, t, q）
+const formatBSValue = (value) => {
+  if (!value || value === 0) return '0'
+  
+  const absValue = Math.abs(value)
+  if (absValue < 1000) return value.toString()
+  if (absValue < 1000000) return (value / 1000).toFixed(1) + 'k'
+  if (absValue < 1000000000) return (value / 1000000).toFixed(1) + 'm'
+  if (absValue < 1000000000000) return (value / 1000000000).toFixed(1) + 'b'
+  if (absValue < 1000000000000000) return (value / 1000000000000).toFixed(1) + 't'
+  return (value / 1000000000000000).toFixed(1) + 'q'
+}
+
+// BS预测算法实现 - 增强错误处理
 const calculateBSPrediction = (userProfile, personalStats, criminalRecord) => {
   try {
-    console.log('开始BS预测计算:', { userProfile, personalStats, criminalRecord })
+    console.log(`开始BS计算 - 用户: ${userProfile?.name || 'Unknown'}`)
     
     if (!userProfile || !personalStats) {
-      console.warn('BS预测：缺少必要数据')
+      console.warn('BS预测：缺少必要数据', { hasProfile: !!userProfile, hasPersonalStats: !!personalStats })
       return { bs: 0, bsScore: 0, confidence: 'low' }
     }
     
-    // 1. 估算总能量消耗
-    const totalEnergy = calculateTotalEnergy(userProfile, personalStats)
-    console.log('总能量计算结果:', totalEnergy)
+    // 详细检查数据完整性
+    const profile = userProfile
+    const stats = personalStats
     
-    // 2. 模拟健身房锻炼
-    const totalStats = simulateGymTraining(totalEnergy, personalStats, userProfile)
-    console.log('健身房模拟结果:', totalStats)
+    console.log(`用户 ${profile?.name || 'Unknown'} 数据检查:`, {
+      age: profile?.age,
+      level: profile?.level,
+      hasOtherStats: !!stats?.other,
+      hasDrugsStats: !!stats?.drugs,
+      hasAttackingStats: !!stats?.attacking,
+      hasItemsStats: !!stats?.items
+    })
+    
+    // 1. 估算总能量消耗
+    const totalEnergy = calculateTotalEnergy(profile, stats)
+    console.log(`用户 ${profile?.name || 'Unknown'} 总能量:`, totalEnergy)
+    
+    if (totalEnergy <= 0) {
+      console.warn(`用户 ${profile?.name || 'Unknown'} 总能量为0或负数`)
+      return { bs: 1000, bsScore: 63, confidence: 'low' } // 给一个最小默认值
+    }
+    
+    // 2. 模拟健身房锻炼（使用新算法）
+    const totalStats = simulateGymTraining(totalEnergy, stats, profile)
+    console.log(`用户 ${profile?.name || 'Unknown'} 模拟结果:`, totalStats)
+    
+    if (totalStats <= 0) {
+      console.warn(`用户 ${profile?.name || 'Unknown'} 模拟结果为0或负数`)
+      return { bs: 1000, bsScore: 63, confidence: 'low' } // 给一个最小默认值
+    }
     
     // 直接使用计算出的总属性值，不进行Rank修正
     const finalBS = totalStats
-    console.log('最终BS结果:', finalBS)
     
     // 计算BS分数 (开根号再乘2)
     const bsScore = Math.sqrt(finalBS) * 2
+    
+    console.log(`用户 ${profile?.name || 'Unknown'} 最终结果: BS=${finalBS}, Score=${bsScore}`)
     
     return {
       bs: Math.floor(finalBS),
@@ -754,195 +1098,143 @@ const calculateBSPrediction = (userProfile, personalStats, criminalRecord) => {
       confidence: totalEnergy > 1000000 ? 'high' : totalEnergy > 100000 ? 'medium' : 'low'
     }
   } catch (error) {
-    console.error('BS预测计算失败:', error)
-    return { bs: 0, bsScore: 0, confidence: 'error' }
+    console.error(`用户 ${userProfile?.name || 'Unknown'} BS预测计算失败:`, error)
+    return { bs: 1000, bsScore: 63, confidence: 'error' } // 出错时给默认值
   }
 }
 
-// 计算总能量消耗
+// 计算总能量消耗 - 增强错误处理
 const calculateTotalEnergy = (profile, stats) => {
-  const now = Math.floor(Date.now() / 1000)
-  const startTimestamp = Math.floor(new Date('2011-11-22').getTime() / 1000)
-  
-  // 计算捐献者比例
-  const m = Math.min(profile.age, (now - startTimestamp) / 86400)
-  const donatorPercent = Math.min((stats.other?.donator_days || 0) / m, 1)
-  
-  // 估算活跃天数
-  const y = 480 + 240 * donatorPercent
-  const F = 611255 / y
-  const a = (now - (profile.last_action?.timestamp || now)) / 86400
-  const ageM = Math.max(1, 21 * (profile.age - a) / 24)
-  
-  const N = 3 * ((stats.other?.activity?.time || 0) / 86400) + (stats.travel?.time_spent || 0) / 86400
-  
-  // 药物活跃度计算 (S_drugs) - 使用新的药物能量公式
-  const exttaken = stats.drugs?.ecstasy || 0
-  const victaken = stats.drugs?.vicodin || 0
-  const kettaken = stats.drugs?.ketamine || 0
-  const lsdtaken = stats.drugs?.lsd || 0
-  const opitaken = stats.drugs?.opium || 0
-  const pcptaken = stats.drugs?.pcp || 0
-  const shrtaken = stats.drugs?.shrooms || 0
-  const spetaken = stats.drugs?.speed || 0
-  const cantaken = stats.drugs?.cannabis || 0
-  const xantaken = stats.drugs?.xanax || 0
-  
-  const drugEnergy = (
-    75 * exttaken +
-    210 * victaken +
-    52.5 * kettaken +
-    425 * lsdtaken +
-    215 * opitaken +
-    430 * pcptaken +
-    209.5 * shrtaken +
-    301 * spetaken +
-    300 * cantaken +
-    420 * xantaken
-  )
-  
-  const S_drugs = drugEnergy / 1440
-  
-  // 犯罪活跃度计算 (n_crimes) - 使用新的犯罪计算逻辑
-  let crimeEnergy = 0
-  if (stats.criminalrecord) {
-    const criminalRecord = stats.criminalrecord
+  try {
+    const now = Math.floor(Date.now() / 1000)
+    const startTimestamp = Math.floor(new Date('2011-11-22').getTime() / 1000)
     
-    // 判断是否存在vandalism (D标志)
-    const D = (criminalRecord.vandalism || 0) > 0
+    // 安全获取数值，提供默认值
+    const age = profile?.age || 100
+    const donatorDays = stats?.other?.donator_days || 0
     
-    // 根据D值计算不同的犯罪系数
-    let c2, c3, c5, c8, c9, c10, c11, c12
+    // 计算捐献者比例
+    const m = Math.min(age, (now - startTimestamp) / 86400)
+    const donatorPercent = m > 0 ? Math.min(donatorDays / m, 1) : 0
     
-    if (D) {
-      c2 = 0.1 * (criminalRecord.theft || 0)
-      c3 = criminalRecord.counterfeiting || 0
-      c5 = 0.65 * (criminalRecord.theft || 0)
-      c8 = (criminalRecord.illicitservices || 0) / 2
-      c9 = criminalRecord.cybercrime || 0
-      c10 = (criminalRecord.illicitservices || 0) / 2
-      c11 = criminalRecord.fraud || 0
-      c12 = 0.25 * (criminalRecord.theft || 0)
-    } else {
-      c2 = criminalRecord.other || 0
-      c3 = criminalRecord.selling_illegal_products || 0
-      c5 = criminalRecord.theft || 0
-      c8 = criminalRecord.drug_deals || 0
-      c9 = criminalRecord.computer_crimes || 0
-      c10 = criminalRecord.murder || 0
-      c11 = criminalRecord.fraud_crimes || 0
-      c12 = criminalRecord.auto_theft || 0
-    }
+    // 估算活跃天数
+    const y = 480 + 240 * donatorPercent
+    const F = 611255 / y
+    const lastActionTime = profile?.last_action?.timestamp || now
+    const a = (now - lastActionTime) / 86400
+    const ageM = Math.max(1, 21 * (age - a) / 24)
     
-    // 计算犯罪能量
-    crimeEnergy = 5 * (
-      2 * c2 +
-      3 * c3 +
-      5 * c5 +
-      8 * (c8 / 0.8) +
-      9 * (c9 / 0.75) +
-      10 * (c10 / 0.75) +
-      11 * (c11 / 0.95) +
-      12 * (c12 / 0.7)
+    const activityTime = stats?.other?.activity?.time || 0
+    const travelTime = stats?.travel?.time_spent || 0
+    const N = 3 * (activityTime / 86400) + (travelTime / 86400)
+    
+    // 药物活跃度计算 - 安全获取数值
+    const drugs = stats?.drugs || {}
+    const exttaken = drugs.ecstasy || 0
+    const victaken = drugs.vicodin || 0
+    const kettaken = drugs.ketamine || 0
+    const lsdtaken = drugs.lsd || 0
+    const opitaken = drugs.opium || 0
+    const pcptaken = drugs.pcp || 0
+    const shrtaken = drugs.shrooms || 0
+    const spetaken = drugs.speed || 0
+    const cantaken = drugs.cannabis || 0
+    const xantaken = drugs.xanax || 0
+    
+    const drugEnergy = (
+      75 * exttaken +
+      210 * victaken +
+      52.5 * kettaken +
+      425 * lsdtaken +
+      215 * opitaken +
+      430 * pcptaken +
+      209.5 * shrtaken +
+      301 * spetaken +
+      300 * cantaken +
+      420 * xantaken
     )
-  }
-  
-  let n_crimes = crimeEnergy / 1440
-  
-  // 修正犯罪活跃度
-  if (n_crimes < F) {
-    const F_corrected = Math.min(F / n_crimes, 3)
-    n_crimes *= F_corrected
-  }
-  
-  const estimateActiveDays = Math.min(ageM, Math.max(N, S_drugs, n_crimes))
-  
-  // 计算各部分能量 - 使用正确的API字段名
-  const natureEnergy = y * estimateActiveDays
-  const itemEnergy = (
-    150 * (stats.other?.refills?.energy || 0) +
-    250 * xantaken +
-    50 * lsdtaken +
-    20 * (stats.items?.used?.energy_drinks || 0) +
-    150 * (stats.items?.used?.boosters || 0)
-  )
-  const expendEnergy = (
-    25 * ((stats.attacking?.attacks?.won || 0) + (stats.attacking?.attacks?.stalemate || 0) + (stats.attacking?.attacks?.lost || 0)) +
-    25 * (stats.hospital?.reviving?.revives || 0) +
-    5 * (stats.items?.found?.dump || 0)
-  )
-  
-  const totalEnergy = Math.max(0, natureEnergy + itemEnergy - expendEnergy)
-  return totalEnergy
-}
-
-// 模拟健身房锻炼
-const simulateGymTraining = (totalEnergy, stats, profile) => {
-  let i = 0 // 总属性点
-  let s = totalEnergy // 剩余能量
-  let r = 0 // 当前健身房索引
-  let l = BS_CONSTANTS.W[0] // 当前健身房容量
-  
-  const now = Math.floor(Date.now() / 1000)
-  const startTimestamp = Math.floor(new Date('2022-08-02').getTime() / 1000)
-  const G = (now - startTimestamp) / 86400
-  const a = (now - (profile.last_action?.timestamp || now)) / 86400
-  const H = totalEnergy * (G - a) / (profile.age - a)
-  
-  while (s > 0 && r < BS_CONSTANTS.L.length) {
-    // 确定本次消耗能量
-    const e = Math.min(BS_CONSTANTS.W[r], s, l, 1000)
     
-    // 获取当前健身房系数
-    const U = BS_CONSTANTS.L[r]
+    const S_drugs = drugEnergy / 1440
     
-    // 计算本次属性增长
-    let attributeGain = 0
+    // 犯罪活跃度计算 - 安全获取数值
+    let crimeEnergy = 0
+    const criminalRecord = stats?.criminalrecord || {}
     
-    if (s > H && i < 200000000) {
-      // 旧公式 - 按照正确的分解方式实现
-      // 1. 计算常量 C1
-      const C1 = (348 * Math.pow(10, -9) * Math.log(4750)) + (31 * Math.pow(10, -7))
+    if (Object.keys(criminalRecord).length > 0) {
+      // 判断是否存在vandalism (D标志)
+      const D = (criminalRecord.vandalism || 0) > 0
       
-      // 2. 计算动态加成系数 D
-      const D = (C1 * i / 4) + 0.32433 - 0.0301431777
+      // 根据D值计算不同的犯罪系数
+      let c2, c3, c5, c8, c9, c10, c11, c12
       
-      // 3. 计算最终属性增长：基础修正系数 * 核心属性增长 * 动态加成系数
-      attributeGain = 1.122 * 1.02 * U * e * D
-    } else if (s > H) {
-      // 属性上限
-      const cappedE = s - H
-      const xanTaken = stats.drugs?.xanax || 0
-      const lsdTaken = stats.drugs?.lsd || 0
-      attributeGain = (xanTaken <= lsdTaken && xanTaken <= 100) 
-        ? (3240 * cappedE) 
-        : (2510 * cappedE)
-    } else {
-      // 新公式
-      let q = (i >= 3000000000) ? (i - 2000000000) : (i / 3)
-      q = (q < 50000000) ? q : ((q - 50000000) / (8.77635 * Math.log10(q)) + 50000000)
-      attributeGain = 5e-6 * U * e * 1.165248 * (q * Math.round(1 + 0.07 * Math.round(Math.log(21), 4), 4) + 8 * Math.pow(5000, 1.05) + 1600 * (1 - Math.pow(5000 / 99999, 2)) + 2000)
+      if (D) {
+        c2 = 0.1 * (criminalRecord.theft || 0)
+        c3 = criminalRecord.counterfeiting || 0
+        c5 = 0.65 * (criminalRecord.theft || 0)
+        c8 = (criminalRecord.illicitservices || 0) / 2
+        c9 = criminalRecord.cybercrime || 0
+        c10 = (criminalRecord.illicitservices || 0) / 2
+        c11 = criminalRecord.fraud || 0
+        c12 = 0.25 * (criminalRecord.theft || 0)
+      } else {
+        c2 = criminalRecord.other || 0
+        c3 = criminalRecord.selling_illegal_products || 0
+        c5 = criminalRecord.theft || 0
+        c8 = criminalRecord.drug_deals || 0
+        c9 = criminalRecord.computer_crimes || 0
+        c10 = criminalRecord.murder || 0
+        c11 = criminalRecord.fraud_crimes || 0
+        c12 = criminalRecord.auto_theft || 0
+      }
+      
+      // 计算犯罪能量
+      crimeEnergy = 5 * (
+        2 * c2 +
+        3 * c3 +
+        5 * c5 +
+        8 * (c8 / 0.8) +
+        9 * (c9 / 0.75) +
+        10 * (c10 / 0.75) +
+        11 * (c11 / 0.95) +
+        12 * (c12 / 0.7)
+      )
     }
     
-    // 更新变量
-    i += attributeGain
-    s -= e
-    l -= e
+    let n_crimes = crimeEnergy / 1440
     
-    // 切换健身房
-    if (l <= 0 && r < BS_CONSTANTS.L.length - 1) {
-      r++
-      l = BS_CONSTANTS.W[r]
+    // 修正犯罪活跃度
+    if (n_crimes < F && n_crimes > 0) {
+      const F_corrected = Math.min(F / n_crimes, 3)
+      n_crimes *= F_corrected
     }
+    
+    const estimateActiveDays = Math.min(ageM, Math.max(N, S_drugs, n_crimes))
+    
+    // 计算各部分能量 - 安全获取数值
+    const natureEnergy = y * estimateActiveDays
+    const itemEnergy = (
+      150 * (stats?.other?.refills?.energy || 0) +
+      250 * xantaken +
+      50 * lsdtaken +
+      20 * (stats?.items?.used?.energy_drinks || 0) +
+      150 * (stats?.items?.used?.boosters || 0)
+    )
+    
+    const attacks = stats?.attacking?.attacks || {}
+    const expendEnergy = (
+      25 * ((attacks.won || 0) + (attacks.stalemate || 0) + (attacks.lost || 0)) +
+      25 * (stats?.hospital?.reviving?.revives || 0) +
+      5 * (stats?.items?.found?.dump || 0)
+    )
+    
+    const totalEnergy = Math.max(0, natureEnergy + itemEnergy - expendEnergy)
+    
+    // 如果计算出的能量太低，给一个最小值
+    return Math.max(totalEnergy, 1000)
+  } catch (error) {
+    console.error('计算总能量失败:', error)
+    return 10000 // 返回一个默认值
   }
-  
-  // SE加成
-  if (stats.items?.used?.stat_enhancers && stats.items.used.stat_enhancers > 0) {
-    const E = stats.items.used.stat_enhancers
-    i = 0.5 * i + 0.25 * i * (1 + 0.85 * (Math.pow(1.01, 0.8 * E) - 1)) + 0.25 * i * (1 + 0.85 * (Math.pow(1.01, 0.2 * E) - 1))
-  }
-  
-  return Math.floor(i)
 }
 
 // 辅助函数
@@ -1445,7 +1737,7 @@ const analyzeChainActivity = (chains) => {
   
   let recentTotalAttacks = 0 // 最近一个月
   
-  console.log(`开始分析整体Chain活跃度，总共 ${chains.length} 个Chain`)
+  console.log(`分析整体Chain活跃度 - 总Chain数: ${chains.length}`)
   
   chains.forEach((chainData, chainIndex) => {
     if (chainData.report && chainData.report.attackers) {
@@ -1503,7 +1795,7 @@ const analyzeChainActivity = (chains) => {
     timeZoneDistribution: timeZoneHours
   }
   
-  console.log('整体Chain活跃度分析结果:', result)
+  console.log(`整体Chain活跃度: 总攻击${totalAttacks}, 近期攻击${recentTotalAttacks}, HOS${result.hosPercentage.toFixed(1)}%`)
   return result
 }
 
@@ -1511,24 +1803,19 @@ const analyzeChainActivity = (chains) => {
 const analyzeMemberData = (members, personalStats, chains) => {
   const memberAnalysis = []
   
-  console.log('开始分析成员数据:', {
-    memberCount: Object.keys(members).length,
-    personalStatsCount: Object.keys(personalStats).length,
-    chainCount: chains.length
-  })
+  console.log(`开始成员数据分析 - 成员数: ${Object.keys(members).length}, 个人数据: ${Object.keys(personalStats).length}`)
   
   Object.entries(members).forEach(([memberId, member]) => {
     const memberData = personalStats[memberId]
     if (!memberData || !memberData.personalstats) {
-      console.warn(`成员 ${memberId} (${member.name}) 缺少个人数据`)
+      console.warn(`成员 ${member.name} 缺少个人数据`)
       return
     }
-    
-    console.log(`开始分析成员 ${memberId} (${member.name})`)
     
     // 计算BS预测
     const bsPrediction = calculateBSPrediction(
       memberData.profile || {
+        name: member.name,
         age: member.days_in_faction || 100,
         level: member.level,
         rank: member.rank || 'Average',
@@ -1540,7 +1827,7 @@ const analyzeMemberData = (members, personalStats, chains) => {
     )
     
     // 分析该成员在Chain中的活跃度
-    const memberChainActivity = analyzeMemberChainActivity(memberId, chains)
+    const memberChainActivity = analyzeMemberChainActivity(memberId, chains, member.name)
     
     // 计算活跃度分数
     const activityScore = calculateActivityScore(memberChainActivity, bsPrediction.bsScore)
@@ -1561,16 +1848,15 @@ const analyzeMemberData = (members, personalStats, chains) => {
       activityScore: activityScore
     }
     
-    console.log(`成员 ${memberId} 分析完成:`, memberInfo)
     memberAnalysis.push(memberInfo)
   })
   
-  console.log(`成员数据分析完成，共分析 ${memberAnalysis.length} 个成员`)
+  console.log(`成员分析完成 - 处理了 ${memberAnalysis.length} 个成员`)
   return memberAnalysis.sort((a, b) => b.activityScore - a.activityScore)
 }
 
 // 分析单个成员在Chain中的活跃度
-const analyzeMemberChainActivity = (memberId, chains) => {
+const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') => {
   let fourMonthAttacks = 0
   let oneMonthAttacks = 0
   let hosAttacks = 0
@@ -1578,15 +1864,12 @@ const analyzeMemberChainActivity = (memberId, chains) => {
   const timeZoneHours = new Array(24).fill(0)
   const oneMonthAgo = Math.floor(Date.now() / 1000) - (30 * 24 * 3600)
   
-  console.log(`开始分析成员 ${memberId} 的Chain活跃度，总共 ${chains.length} 个Chain`)
-  
-  chains.forEach((chainData, chainIndex) => {
+  chains.forEach((chainData) => {
     if (chainData.report && chainData.report.attackers) {
       // 在attackers数组中查找该成员
       const memberAttacker = chainData.report.attackers.find(attacker => String(attacker.id) === String(memberId))
       if (memberAttacker && memberAttacker.attacks) {
         const attacks = memberAttacker.attacks
-        console.log(`成员 ${memberId} 在Chain ${chainIndex + 1} 中的攻击数据:`, attacks)
         
         const totalAttacks = attacks.total || 0
         fourMonthAttacks += totalAttacks
@@ -1629,14 +1912,6 @@ const analyzeMemberChainActivity = (memberId, chains) => {
       }
     }
   }
-  
-  console.log(`成员 ${memberId} 活跃度分析结果:`, {
-    fourMonthAttacks,
-    oneMonthAttacks,
-    hosAttacks,
-    revengeAttacks,
-    peakHours
-  })
   
   return {
     fourMonthAttacks,
@@ -1755,18 +2030,28 @@ const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
   const faction1WinRate = Math.round(50 + (scoreDiff / (1 + Math.abs(scoreDiff) / 20)) * 20)
   const faction2WinRate = 100 - faction1WinRate
   
-  // 生成分析说明
-  const analysis = `
-    ${faction1Analysis.name}: 平均BS ${Math.round(faction1Analysis.averageBS)}, 活跃度 ${Math.round(faction1Analysis.averageActivityScore)}, ${faction1Analysis.memberCount} 人
-    ${faction2Analysis.name}: 平均BS ${Math.round(faction2Analysis.averageBS)}, 活跃度 ${Math.round(faction2Analysis.averageActivityScore)}, ${faction2Analysis.memberCount} 人
-    
-    综合实力评分: ${Math.round(faction1Score)} vs ${Math.round(faction2Score)}
-  `
+  // 生成格式化的分析说明
+  const analysisData = {
+    faction1: {
+      name: faction1Analysis.name,
+      averageBS: formatBSValue(Math.round(faction1Analysis.averageBS)),
+      activityScore: Math.round(faction1Analysis.averageActivityScore),
+      memberCount: faction1Analysis.memberCount,
+      score: Math.round(faction1Score)
+    },
+    faction2: {
+      name: faction2Analysis.name,
+      averageBS: formatBSValue(Math.round(faction2Analysis.averageBS)),
+      activityScore: Math.round(faction2Analysis.averageActivityScore),
+      memberCount: faction2Analysis.memberCount,
+      score: Math.round(faction2Score)
+    }
+  }
   
   return {
     faction1WinRate: Math.max(10, Math.min(90, faction1WinRate)), // 限制在10%-90%之间
     faction2WinRate: Math.max(10, Math.min(90, faction2WinRate)),
-    analysis: analysis.trim(),
+    analysisData: analysisData,
     faction1Score,
     faction2Score
   }
@@ -1859,6 +2144,7 @@ const fetchAllData = async () => {
     
     // 获取成员个人数据
     updateProgress(++currentStep, totalSteps, '获取成员个人数据...')
+    statusMessage.value = '正在获取成员个人数据...'
     console.log('开始获取成员个人数据...')
     
     const faction1PersonalStats = {}
@@ -1874,6 +2160,7 @@ const fetchAllData = async () => {
     
     // 实现真正的并发：每个API密钥同时处理一个成员
     let processedCount = 0
+    let successCount = 0
     const memberQueue = [...allMembers] // 复制队列
     
     // 创建并发工作器，每个API密钥一个
@@ -1923,6 +2210,7 @@ const fetchAllData = async () => {
             const cacheKey = getCacheKey('personalstats', member.id)
             setCachedData(cacheKey, combinedData)
             
+            successCount++
             console.log(`工作器 ${workerIndex + 1} 成功获取成员 ${member.id} 的数据`)
           } else {
             console.warn(`工作器 ${workerIndex + 1} 获取成员 ${member.id} 数据为空`)
@@ -1938,7 +2226,8 @@ const fetchAllData = async () => {
         // 更新进度
         processedCount++
         currentStep++
-        updateProgress(currentStep, totalSteps, `已获取 ${processedCount}/${allMembers.length} 个成员数据`)
+        statusMessage.value = `正在获取成员个人数据... (${processedCount}/${allMembers.length})`
+        updateProgress(currentStep, totalSteps, `已处理 ${processedCount}/${allMembers.length} 个成员，成功获取 ${successCount} 个`)
         updateDetailedProgress(`members_all`, `所有成员数据`, processedCount, allMembers.length)
         
         // 每个请求后等待一小段时间，避免触发API限制
@@ -1951,10 +2240,11 @@ const fetchAllData = async () => {
     // 等待所有工作器完成
     await Promise.all(workers)
     
-    console.log(`个人数据获取完成，成功获取 ${processedCount} 个成员的数据`)
+    console.log(`个人数据获取完成，成功获取 ${successCount} 个成员的数据，共处理 ${processedCount} 个成员`)
     
     // 完成数据收集
     updateProgress(totalSteps, totalSteps, '数据获取完成！')
+    statusMessage.value = '数据获取完成，正在分析帮派实力...'
     
     // 进行帮派实力分析
     statusMessage.value = '正在分析帮派实力...'
@@ -2226,6 +2516,35 @@ onMounted(() => {
 
 .peak-hours {
   color: #67c23a;
+}
+
+.faction-analysis {
+  padding: 10px;
+}
+
+.faction-analysis h5 {
+  margin-bottom: 10px;
+  color: #409eff;
+  font-weight: 600;
+}
+
+.faction-analysis ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.faction-analysis li {
+  padding: 5px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.faction-analysis li:last-child {
+  border-bottom: none;
+}
+
+.analysis-details {
+  padding: 10px 0;
 }
 
 .cache-data-content {
