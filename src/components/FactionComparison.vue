@@ -120,7 +120,7 @@
     <el-card v-if="cacheInfo.length > 0" class="cache-info-card" style="margin-top: 20px;">
       <template #header>
         <div class="cache-header">
-          <h4>缓存数据信息</h4>
+          <h4>缓存数据信息 ({{ cacheInfo.length }} 项)</h4>
           <div>
             <el-button size="small" @click="clearCache">清空缓存</el-button>
           </div>
@@ -1274,6 +1274,13 @@ const getFourMonthsAgo = () => {
   return Math.floor(now.getTime() / 1000)
 }
 
+// 获取四个月前的日期（用于缓存键，更精确到天）
+const getFourMonthsAgoDateString = () => {
+  const now = new Date()
+  now.setMonth(now.getMonth() - 4)
+  return now.toISOString().split('T')[0] // YYYY-MM-DD格式
+}
+
 // 更新进度
 const updateProgress = (step, total, message) => {
   overallProgress.value = Math.round((step / total) * 100)
@@ -1417,7 +1424,7 @@ const getMemberPersonalStats = async (memberId, requestQueue, memberIndex, total
 // 获取帮派RW数据
 const getFactionRankedWars = async (factionId, requestQueue) => {
   const fourMonthsAgo = getFourMonthsAgo()
-  const cacheKey = getCacheKey('rankedwars', factionId, fourMonthsAgo.toString())
+  const cacheKey = getCacheKey('rankedwars', factionId, getFourMonthsAgoDateString())
   let cached = getCachedData(cacheKey)
   
   if (cached) {
@@ -1560,7 +1567,7 @@ const getFactionRankedWars = async (factionId, requestQueue) => {
 // 获取帮派Chain数据（基于RW时间范围）
 const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
   const fourMonthsAgo = getFourMonthsAgo()
-  const cacheKey = getCacheKey('chains', factionId, fourMonthsAgo.toString())
+  const cacheKey = getCacheKey('chains', factionId, getFourMonthsAgoDateString())
   let cached = getCachedData(cacheKey)
   
   if (cached) {
@@ -2065,6 +2072,35 @@ const fetchAllData = async () => {
   abortController.value = new AbortController()
   
   try {
+    // 先统计可用的缓存数据
+    console.log('检查可用缓存数据...')
+    const faction1Id = form.faction1Id
+    const faction2Id = form.faction2Id
+    const dateString = getFourMonthsAgoDateString()
+    
+    const cacheStats = {
+      faction1: {
+        info: !!getCachedData(getCacheKey('faction', faction1Id)),
+        members: !!getCachedData(getCacheKey('members', faction1Id)),
+        rankedwars: !!getCachedData(getCacheKey('rankedwars', faction1Id, dateString)),
+        chains: !!getCachedData(getCacheKey('chains', faction1Id, dateString))
+      },
+      faction2: {
+        info: !!getCachedData(getCacheKey('faction', faction2Id)),
+        members: !!getCachedData(getCacheKey('members', faction2Id)),
+        rankedwars: !!getCachedData(getCacheKey('rankedwars', faction2Id, dateString)),
+        chains: !!getCachedData(getCacheKey('chains', faction2Id, dateString))
+      }
+    }
+    
+    const totalCacheableItems = 8 // 两个帮派各4项数据
+    const cachedItems = Object.values(cacheStats.faction1).filter(Boolean).length + 
+                       Object.values(cacheStats.faction2).filter(Boolean).length
+    const cacheHitRateBasic = Math.round((cachedItems / totalCacheableItems) * 100)
+    
+    console.log(`缓存状态: ${cachedItems}/${totalCacheableItems} 项基础数据已缓存 (${cacheHitRateBasic}%)`)
+    statusMessage.value = `开始数据获取... (${cachedItems}/${totalCacheableItems} 项基础数据已缓存)`
+    
     // 总步骤计算（这里是动态的，因为RW和Chain数量未知）
     let totalSteps = 6 // 基本信息获取
     let currentStep = 0
@@ -2161,6 +2197,7 @@ const fetchAllData = async () => {
     // 实现真正的并发：每个API密钥同时处理一个成员
     let processedCount = 0
     let successCount = 0
+    let cacheHitCount = 0 // 缓存命中计数
     const memberQueue = [...allMembers] // 复制队列
     
     // 创建并发工作器，每个API密钥一个
@@ -2177,25 +2214,45 @@ const fetchAllData = async () => {
         const member = memberQueue.shift()
         if (!member) break
         
+        // 声明cached变量，确保在整个循环中都可以访问
+        let cached = false
+        
         try {
           console.log(`工作器 ${workerIndex + 1} 开始获取成员 ${member.id} 的数据`)
           
-          // 直接使用API密钥发起请求，不通过队列
-          const [profileData, personalStatsData] = await Promise.all([
-            fetchApi(`/user/${member.id}`, apiKey),
-            fetchApi(`/user/${member.id}/personalstats?cat=all`, apiKey)
-          ])
+          // 首先检查缓存
+          const cacheKey = getCacheKey('personalstats', member.id)
+          const cachedData = getCachedData(cacheKey)
           
-          // 检查是否被取消
-          if (abortController.value?.signal.aborted) {
-            throw new Error('请求被取消')
-          }
-          
-          // 合并数据
-          const combinedData = {
-            profile: profileData.profile || profileData,
-            personalstats: personalStatsData.personalstats || personalStatsData,
-            criminalrecord: personalStatsData.criminalrecord || (profileData.criminalrecord || {})
+          let combinedData
+          if (cachedData) {
+            console.log(`工作器 ${workerIndex + 1} 从缓存获取成员 ${member.id} 的数据`)
+            combinedData = cachedData
+            cached = true
+            cacheHitCount++
+          } else {
+            // 缓存中没有，发起API请求
+            const [profileData, personalStatsData] = await Promise.all([
+              fetchApi(`/user/${member.id}`, apiKey),
+              fetchApi(`/user/${member.id}/personalstats?cat=all`, apiKey)
+            ])
+            
+            // 检查是否被取消
+            if (abortController.value?.signal.aborted) {
+              throw new Error('请求被取消')
+            }
+            
+            // 合并数据
+            combinedData = {
+              profile: profileData.profile || profileData,
+              personalstats: personalStatsData.personalstats || personalStatsData,
+              criminalrecord: personalStatsData.criminalrecord || (profileData.criminalrecord || {})
+            }
+            
+            // 设置缓存
+            setCachedData(cacheKey, combinedData)
+            console.log(`工作器 ${workerIndex + 1} 获取并缓存成员 ${member.id} 的数据`)
+            cached = false
           }
           
           if (combinedData.personalstats) {
@@ -2206,12 +2263,8 @@ const fetchAllData = async () => {
               faction2PersonalStats[member.id] = combinedData
             }
             
-            // 缓存数据
-            const cacheKey = getCacheKey('personalstats', member.id)
-            setCachedData(cacheKey, combinedData)
-            
             successCount++
-            console.log(`工作器 ${workerIndex + 1} 成功获取成员 ${member.id} 的数据`)
+            console.log(`工作器 ${workerIndex + 1} 成功处理成员 ${member.id} 的数据`)
           } else {
             console.warn(`工作器 ${workerIndex + 1} 获取成员 ${member.id} 数据为空`)
           }
@@ -2226,12 +2279,16 @@ const fetchAllData = async () => {
         // 更新进度
         processedCount++
         currentStep++
-        statusMessage.value = `正在获取成员个人数据... (${processedCount}/${allMembers.length})`
-        updateProgress(currentStep, totalSteps, `已处理 ${processedCount}/${allMembers.length} 个成员，成功获取 ${successCount} 个`)
+        const cacheHitRate = processedCount > 0 ? Math.round((cacheHitCount / processedCount) * 100) : 0
+        statusMessage.value = `正在获取成员个人数据... (${processedCount}/${allMembers.length}, 缓存命中率: ${cacheHitRate}%)`
+        updateProgress(currentStep, totalSteps, `已处理 ${processedCount}/${allMembers.length} 个成员，成功获取 ${successCount} 个，缓存命中 ${cacheHitCount} 个`)
         updateDetailedProgress(`members_all`, `所有成员数据`, processedCount, allMembers.length)
         
-        // 每个请求后等待一小段时间，避免触发API限制
-        await new Promise(resolve => setTimeout(resolve, 1200)) // 50次/分钟 = 1.2秒间隔
+        // 如果是从缓存获取的数据，不需要等待
+        if (!cached) {
+          // 每个请求后等待一小段时间，避免触发API限制
+          await new Promise(resolve => setTimeout(resolve, 1200)) // 50次/分钟 = 1.2秒间隔
+        }
       }
       
       console.log(`工作器 ${workerIndex + 1} 完成工作`)
@@ -2243,7 +2300,8 @@ const fetchAllData = async () => {
     console.log(`个人数据获取完成，成功获取 ${successCount} 个成员的数据，共处理 ${processedCount} 个成员`)
     
     // 完成数据收集
-    updateProgress(totalSteps, totalSteps, '数据获取完成！')
+    const finalCacheHitRate = processedCount > 0 ? Math.round((cacheHitCount / processedCount) * 100) : 0
+    updateProgress(totalSteps, totalSteps, `数据获取完成！处理了 ${processedCount} 个成员，成功 ${successCount} 个，缓存命中率 ${finalCacheHitRate}%`)
     statusMessage.value = '数据获取完成，正在分析帮派实力...'
     
     // 进行帮派实力分析
