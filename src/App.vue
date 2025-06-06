@@ -38,6 +38,10 @@
           <el-icon><Link /></el-icon>
           <span>Chain 查看器</span>
         </el-menu-item>
+        <el-menu-item index="comparison">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>帮派实力对比</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -288,6 +292,11 @@
       <div v-if="activeMenu === 'chains'" class="content-section">
         <ChainAnalyzer :api-key="globalApiKey" />
       </div>
+      
+      <!-- 帮派实力对比 -->
+      <div v-if="activeMenu === 'comparison'" class="content-section">
+        <FactionComparison />
+      </div>
     </el-main>
   </div>
 </template>
@@ -296,7 +305,8 @@
 import { ref, reactive, computed, watch } from 'vue'
 import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
-import { Box, Operation, Link } from '@element-plus/icons-vue'
+import FactionComparison from './components/FactionComparison.vue'
+import { Box, Operation, Link, DataAnalysis } from '@element-plus/icons-vue'
 
 // 全局状态
 const globalApiKey = ref('')
