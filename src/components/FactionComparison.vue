@@ -300,7 +300,7 @@
               >
                 <el-table-column prop="name" label="成员名" width="120" fixed="left" />
                 <el-table-column prop="id" label="ID" width="80" />
-                <el-table-column label="预估BS" width="100" align="center" sortable="custom" sort-by="estimatedBS">
+                <el-table-column prop="estimatedBS" label="预估BS" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
                       {{ row.estimatedBS.toLocaleString() }}
@@ -309,14 +309,14 @@
                 </el-table-column>
                 <el-table-column prop="fourMonthAttacks" label="四月开枪数" width="100" align="center" sortable />
                 <el-table-column prop="oneMonthAttacks" label="一月开枪数" width="100" align="center" sortable />
-                <el-table-column label="HOS占比" width="80" align="center" sortable="custom" sort-by="hosPercentage">
+                <el-table-column prop="hosPercentage" label="HOS占比" width="80" align="center" sortable>
                   <template #default="{ row }">
                     <span :style="{ color: row.hosPercentage > 20 ? '#67c23a' : '#909399' }">
                       {{ row.hosPercentage.toFixed(1) }}%
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column label="复仇占比" width="80" align="center" sortable="custom" sort-by="revengePercentage">
+                <el-table-column prop="revengePercentage" label="复仇占比" width="80" align="center" sortable>
                   <template #default="{ row }">
                     <span :style="{ color: row.revengePercentage > 10 ? '#f56c6c' : '#909399' }">
                       {{ row.revengePercentage.toFixed(1) }}%
@@ -331,7 +331,7 @@
                     <span v-else style="color: #909399;">无数据</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="活跃度分数" width="100" align="center" sortable="custom" sort-by="activityScore">
+                <el-table-column prop="activityScore" label="活跃度分数" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.activityScore > 100 ? 'success' : row.activityScore > 50 ? 'warning' : 'info'" size="small">
                       {{ Math.round(row.activityScore) }}
@@ -352,7 +352,7 @@
               >
                 <el-table-column prop="name" label="成员名" width="120" fixed="left" />
                 <el-table-column prop="id" label="ID" width="80" />
-                <el-table-column label="预估BS" width="100" align="center" sortable="custom" sort-by="estimatedBS">
+                <el-table-column prop="estimatedBS" label="预估BS" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
                       {{ row.estimatedBS.toLocaleString() }}
@@ -361,14 +361,14 @@
                 </el-table-column>
                 <el-table-column prop="fourMonthAttacks" label="四月开枪数" width="100" align="center" sortable />
                 <el-table-column prop="oneMonthAttacks" label="一月开枪数" width="100" align="center" sortable />
-                <el-table-column label="HOS占比" width="80" align="center" sortable="custom" sort-by="hosPercentage">
+                <el-table-column prop="hosPercentage" label="HOS占比" width="80" align="center" sortable>
                   <template #default="{ row }">
                     <span :style="{ color: row.hosPercentage > 20 ? '#67c23a' : '#909399' }">
                       {{ row.hosPercentage.toFixed(1) }}%
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column label="复仇占比" width="80" align="center" sortable="custom" sort-by="revengePercentage">
+                <el-table-column prop="revengePercentage" label="复仇占比" width="80" align="center" sortable>
                   <template #default="{ row }">
                     <span :style="{ color: row.revengePercentage > 10 ? '#f56c6c' : '#909399' }">
                       {{ row.revengePercentage.toFixed(1) }}%
@@ -383,7 +383,7 @@
                     <span v-else style="color: #909399;">无数据</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="活跃度分数" width="100" align="center" sortable="custom" sort-by="activityScore">
+                <el-table-column prop="activityScore" label="活跃度分数" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.activityScore > 100 ? 'success' : row.activityScore > 50 ? 'warning' : 'info'" size="small">
                       {{ Math.round(row.activityScore) }}
@@ -1299,12 +1299,6 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
     
     const allChains = data.chains || data || []
     console.log(`帮派 ${factionId} 获取到 ${Object.keys(allChains).length} 条Chain记录`)
-    console.log(`帮派 ${factionId} Chain基础数据结构:`, {
-      dataKeys: Object.keys(data),
-      chainsKeys: data.chains ? Object.keys(data.chains) : [],
-      firstChainId: Object.keys(allChains)[0],
-      firstChainData: allChains[Object.keys(allChains)[0]]
-    })
     
     // 3. 过滤RW时间范围内的Chain
     const rwChains = {}
@@ -1332,7 +1326,6 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
     }
     
     console.log(`帮派 ${factionId} 过滤后剩余 ${Object.keys(rwChains).length} 条RW相关的Chain记录`)
-    console.log(`帮派 ${factionId} 真实Chain ID示例:`, Object.keys(rwChains).slice(0, 3))
     
     // 4. 高度并发获取每个Chain的详细报告
     const detailedChains = []
@@ -1363,8 +1356,6 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
           
           try {
             console.log(`Chain工作器 ${workerIndex + 1} 开始获取Chain ${chainId} 的详细报告`)
-            console.log(`API请求URL: /faction/${chainId}/chainreport`)
-            console.log(`Chain ID类型和值:`, { chainId, type: typeof chainId, isString: typeof chainId === 'string' })
             
             const reportData = await fetchApi(`/faction/${chainId}/chainreport`, apiKey)
             
@@ -1372,38 +1363,24 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
               throw new Error('请求被取消')
             }
             
-            console.log(`Chain ${chainId} 详细报告原始数据:`, reportData)
-            console.log(`Chain ${chainId} 数据类型检查:`, {
-              hasChainreport: !!reportData.chainreport,
-              chainreportKeys: reportData.chainreport ? Object.keys(reportData.chainreport) : [],
-              hasAttackers: !!reportData.chainreport?.attackers,
-              attackersCount: reportData.chainreport?.attackers?.length || 0,
-              directAttackers: !!reportData.attackers,
-              directAttackersCount: reportData.attackers?.length || 0,
-              allKeys: Object.keys(reportData)
-            })
-            
             if (reportData.chainreport && reportData.chainreport.attackers) {
-              console.log(`Chain ${chainId} 有效报告，攻击者数量:`, reportData.chainreport.attackers.length)
               detailedChains.push({
                 id: chainId, // 这现在是真实的chain.id
                 basicInfo: rwChains[chainId],
                 report: reportData.chainreport,
                 relatedWars: rwChains[chainId].relatedWars
               })
-              console.log(`Chain工作器 ${workerIndex + 1} 成功获取Chain ${chainId}`)
+              console.log(`Chain工作器 ${workerIndex + 1} 成功获取Chain ${chainId}，攻击者数量: ${reportData.chainreport.attackers.length}`)
             } else if (reportData.attackers) {
-              console.log(`Chain ${chainId} 使用直接攻击者数据格式，攻击者数量:`, reportData.attackers.length)
               detailedChains.push({
                 id: chainId, // 这现在是真实的chain.id
                 basicInfo: rwChains[chainId],
                 report: reportData,
                 relatedWars: rwChains[chainId].relatedWars
               })
-              console.log(`Chain工作器 ${workerIndex + 1} 使用直接格式获取Chain ${chainId}`)
+              console.log(`Chain工作器 ${workerIndex + 1} 获取Chain ${chainId}（直接格式），攻击者数量: ${reportData.attackers.length}`)
             } else {
-              console.warn(`Chain ${chainId} 报告数据结构异常:`, Object.keys(reportData))
-              console.warn(`Chain ${chainId} 完整数据:`, reportData)
+              console.warn(`Chain ${chainId} 报告数据结构异常`)
               detailedChains.push({
                 id: chainId, // 这现在是真实的chain.id
                 basicInfo: rwChains[chainId],
@@ -1464,15 +1441,7 @@ const analyzeChainActivity = (chains) => {
   console.log(`开始分析整体Chain活跃度，总共 ${chains.length} 个Chain`)
   
   chains.forEach((chainData, chainIndex) => {
-    console.log(`检查Chain ${chainIndex + 1} 数据结构:`, {
-      hasReport: !!chainData.report,
-      reportKeys: chainData.report ? Object.keys(chainData.report) : [],
-      hasAttackers: chainData.report?.attackers ? chainData.report.attackers.length : 0
-    })
-    
     if (chainData.report && chainData.report.attackers) {
-      console.log(`分析Chain ${chainIndex + 1}，有 ${chainData.report.attackers.length} 个攻击者`)
-      
       // 使用新的数据结构：chainreport.attackers数组
       chainData.report.attackers.forEach(attacker => {
         if (attacker.attacks) {
@@ -1504,8 +1473,6 @@ const analyzeChainActivity = (chains) => {
           }
         }
       })
-    } else {
-      console.log(`Chain ${chainIndex + 1} 没有有效的报告数据 - report:`, !!chainData.report, 'attackers:', !!chainData.report?.attackers)
     }
   })
   
@@ -1607,12 +1574,6 @@ const analyzeMemberChainActivity = (memberId, chains) => {
   console.log(`开始分析成员 ${memberId} 的Chain活跃度，总共 ${chains.length} 个Chain`)
   
   chains.forEach((chainData, chainIndex) => {
-    console.log(`检查成员 ${memberId} 在Chain ${chainIndex + 1} 的数据结构:`, {
-      hasReport: !!chainData.report,
-      reportKeys: chainData.report ? Object.keys(chainData.report) : [],
-      hasAttackers: chainData.report?.attackers ? chainData.report.attackers.length : 0
-    })
-    
     if (chainData.report && chainData.report.attackers) {
       // 在attackers数组中查找该成员
       const memberAttacker = chainData.report.attackers.find(attacker => String(attacker.id) === String(memberId))
@@ -1645,11 +1606,7 @@ const analyzeMemberChainActivity = (memberId, chains) => {
             timeZoneHours[beijingHour]++
           }
         }
-      } else {
-        console.log(`成员 ${memberId} 在Chain ${chainIndex + 1} 中未找到攻击数据`)
       }
-    } else {
-      console.log(`Chain ${chainIndex + 1} 没有有效的报告数据 - report:`, !!chainData.report, 'attackers:', !!chainData.report?.attackers)
     }
   })
   
