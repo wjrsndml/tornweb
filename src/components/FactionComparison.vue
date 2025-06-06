@@ -741,9 +741,9 @@ const calculateBSPrediction = (userProfile, personalStats, criminalRecord) => {
     const totalStats = simulateGymTraining(totalEnergy, personalStats, userProfile)
     console.log('健身房模拟结果:', totalStats)
     
-    // 3. 根据Rank进行修正
-    const finalBS = applyRankCorrection(totalStats, userProfile, criminalRecord)
-    console.log('Rank修正后结果:', finalBS)
+    // 直接使用计算出的总属性值，不进行Rank修正
+    const finalBS = totalStats
+    console.log('最终BS结果:', finalBS)
     
     // 计算BS分数 (开根号再乘2)
     const bsScore = Math.sqrt(finalBS) * 2
@@ -776,50 +776,93 @@ const calculateTotalEnergy = (profile, stats) => {
   
   const N = 3 * ((stats.other?.activity?.time || 0) / 86400) + (stats.travel?.time_spent || 0) / 86400
   
-  // 药物能量估算 - 使用正确的API字段名
+  // 药物活跃度计算 (S_drugs) - 使用新的药物能量公式
+  const exttaken = stats.drugs?.ecstasy || 0
+  const victaken = stats.drugs?.vicodin || 0
+  const kettaken = stats.drugs?.ketamine || 0
+  const lsdtaken = stats.drugs?.lsd || 0
+  const opitaken = stats.drugs?.opium || 0
+  const pcptaken = stats.drugs?.pcp || 0
+  const shrtaken = stats.drugs?.shrooms || 0
+  const spetaken = stats.drugs?.speed || 0
+  const cantaken = stats.drugs?.cannabis || 0
+  const xantaken = stats.drugs?.xanax || 0
+  
   const drugEnergy = (
-    75 * (stats.drugs?.ecstasy || 0) +
-    210 * (stats.drugs?.vicodin || 0) +
-    150 * (stats.drugs?.xanax || 0) +
-    75 * (stats.drugs?.lsd || 0) +
-    150 * (stats.drugs?.ketamine || 0) +
-    150 * (stats.drugs?.opium || 0) +
-    150 * (stats.drugs?.pcp || 0) +
-    150 * (stats.drugs?.shrooms || 0) +
-    150 * (stats.drugs?.speed || 0) +
-    150 * (stats.drugs?.cannabis || 0)
-  ) / 1440
+    75 * exttaken +
+    210 * victaken +
+    52.5 * kettaken +
+    425 * lsdtaken +
+    215 * opitaken +
+    430 * pcptaken +
+    209.5 * shrtaken +
+    301 * spetaken +
+    300 * cantaken +
+    420 * xantaken
+  )
   
-  // 犯罪活跃度估算 - 使用正确的API字段名
+  const S_drugs = drugEnergy / 1440
+  
+  // 犯罪活跃度计算 (n_crimes) - 使用新的犯罪计算逻辑
   let crimeEnergy = 0
-  if (stats.crimes) {
-    const crimes = stats.crimes
-    crimeEnergy = (
-      (crimes.theft || 0) * 2 +
-      (crimes.sell_illegal_goods || 0) * 3 +
-      (crimes.drug_deals || 0) * 4 +
-      (crimes.computer || 0) * 5 +
-      (crimes.murder || 0) * 10 +
-      (crimes.fraud || 0) * 6 +
-      (crimes.auto_theft || 0) * 3 +
-      (crimes.other || 0) * 3 +
-      (crimes.organized_crimes || 0) * 8
-    ) / 1440
+  if (stats.criminalrecord) {
+    const criminalRecord = stats.criminalrecord
+    
+    // 判断是否存在vandalism (D标志)
+    const D = (criminalRecord.vandalism || 0) > 0
+    
+    // 根据D值计算不同的犯罪系数
+    let c2, c3, c5, c8, c9, c10, c11, c12
+    
+    if (D) {
+      c2 = 0.1 * (criminalRecord.theft || 0)
+      c3 = criminalRecord.counterfeiting || 0
+      c5 = 0.65 * (criminalRecord.theft || 0)
+      c8 = (criminalRecord.illicitservices || 0) / 2
+      c9 = criminalRecord.cybercrime || 0
+      c10 = (criminalRecord.illicitservices || 0) / 2
+      c11 = criminalRecord.fraud || 0
+      c12 = 0.25 * (criminalRecord.theft || 0)
+    } else {
+      c2 = criminalRecord.other || 0
+      c3 = criminalRecord.selling_illegal_products || 0
+      c5 = criminalRecord.theft || 0
+      c8 = criminalRecord.drug_deals || 0
+      c9 = criminalRecord.computer_crimes || 0
+      c10 = criminalRecord.murder || 0
+      c11 = criminalRecord.fraud_crimes || 0
+      c12 = criminalRecord.auto_theft || 0
+    }
+    
+    // 计算犯罪能量
+    crimeEnergy = 5 * (
+      2 * c2 +
+      3 * c3 +
+      5 * c5 +
+      8 * (c8 / 0.8) +
+      9 * (c9 / 0.75) +
+      10 * (c10 / 0.75) +
+      11 * (c11 / 0.95) +
+      12 * (c12 / 0.7)
+    )
   }
   
-  if (crimeEnergy < F) {
-    const correctionFactor = Math.min(F / crimeEnergy, 3)
-    crimeEnergy *= correctionFactor
+  let n_crimes = crimeEnergy / 1440
+  
+  // 修正犯罪活跃度
+  if (n_crimes < F) {
+    const F_corrected = Math.min(F / n_crimes, 3)
+    n_crimes *= F_corrected
   }
   
-  const estimateActiveDays = Math.min(ageM, Math.max(N, drugEnergy, crimeEnergy))
+  const estimateActiveDays = Math.min(ageM, Math.max(N, S_drugs, n_crimes))
   
   // 计算各部分能量 - 使用正确的API字段名
   const natureEnergy = y * estimateActiveDays
   const itemEnergy = (
     150 * (stats.other?.refills?.energy || 0) +
-    250 * (stats.drugs?.xanax || 0) +
-    50 * (stats.drugs?.lsd || 0) +
+    250 * xantaken +
+    50 * lsdtaken +
     20 * (stats.items?.used?.energy_drinks || 0) +
     150 * (stats.items?.used?.boosters || 0)
   )
@@ -857,12 +900,21 @@ const simulateGymTraining = (totalEnergy, stats, profile) => {
     let attributeGain = 0
     
     if (s > H && i < 200000000) {
-      // 旧公式
-      attributeGain = 1.122 * 1.02 * U * e * (((3.48e-9 * Math.log(4750) + 3.1e-7) * i / 4) + 0.32433 - 0.0301431777)
+      // 旧公式 - 按照正确的分解方式实现
+      // 1. 计算常量 C1
+      const C1 = (348 * Math.pow(10, -9) * Math.log(4750)) + (31 * Math.pow(10, -7))
+      
+      // 2. 计算动态加成系数 D
+      const D = (C1 * i / 4) + 0.32433 - 0.0301431777
+      
+      // 3. 计算最终属性增长：基础修正系数 * 核心属性增长 * 动态加成系数
+      attributeGain = 1.122 * 1.02 * U * e * D
     } else if (s > H) {
       // 属性上限
       const cappedE = s - H
-      attributeGain = ((stats.xantaken || 0) <= (stats.lsdtaken || 0) && (stats.xantaken || 0) <= 100) 
+      const xanTaken = stats.drugs?.xanax || 0
+      const lsdTaken = stats.drugs?.lsd || 0
+      attributeGain = (xanTaken <= lsdTaken && xanTaken <= 100) 
         ? (3240 * cappedE) 
         : (2510 * cappedE)
     } else {
@@ -891,51 +943,6 @@ const simulateGymTraining = (totalEnergy, stats, profile) => {
   }
   
   return Math.floor(i)
-}
-
-// 应用Rank修正
-const applyRankCorrection = (totalStats, profile, criminalRecord) => {
-  let c = BS_CONSTANTS.Y[profile.rank] || 1
-  c--
-  
-  // 根据等级修正
-  for (const threshold of BS_CONSTANTS.J) {
-    if (profile.level >= threshold) c--
-  }
-  
-  // 根据犯罪次数修正 - 使用正确的API字段名
-  const totalCrimes = criminalRecord?.total || 0
-  for (const threshold of BS_CONSTANTS.K) {
-    if (totalCrimes >= threshold) c--
-  }
-  
-  // 根据总资产修正 - 使用正确的API字段名
-  const networth = profile.networth?.total || profile.networth || 0
-  for (const threshold of BS_CONSTANTS.V) {
-    if (networth >= threshold) c--
-  }
-  
-  // 确定Rank对应的BS范围
-  let lowerBound, upperBound
-  if (c <= 0) {
-    lowerBound = 0
-    upperBound = BS_CONSTANTS.R[0]
-  } else if (c >= BS_CONSTANTS.B.length) {
-    lowerBound = BS_CONSTANTS.B[BS_CONSTANTS.B.length - 1]
-    upperBound = Number.MAX_SAFE_INTEGER
-  } else {
-    lowerBound = BS_CONSTANTS.B[c - 1]
-    upperBound = BS_CONSTANTS.R[c]
-  }
-  
-  // 根据计算结果与范围关系返回最终值
-  if (totalStats < lowerBound) {
-    return (totalStats + lowerBound) / 2 // 返回中间值
-  } else if (totalStats > upperBound) {
-    return (upperBound + totalStats) / 2 // 返回中间值
-  } else {
-    return totalStats
-  }
 }
 
 // 辅助函数
