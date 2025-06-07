@@ -220,6 +220,155 @@
               </div>
             </el-col>
           </el-row>
+          
+          <!-- 24小时开战胜率表 -->
+          <div v-if="comparisonResult.winRatePrediction.hourlyWinRates" class="hourly-win-rates" style="margin-top: 30px;">
+            <el-collapse>
+              <el-collapse-item name="hourly-rates">
+                <template #title>
+                  <h4>⏰ 24小时开战胜率详表 (平均胜率: {{ comparisonResult.winRatePrediction.faction1WinRate }}% : {{ comparisonResult.winRatePrediction.faction2WinRate }}%)</h4>
+                </template>
+                
+                <div class="hourly-explanation" style="margin-bottom: 15px;">
+                  <el-alert 
+                    title="说明" 
+                    type="info" 
+                    :closable="false"
+                    description="根据成员活跃时间段计算不同开战时间的胜率。活跃时间100%战力，无数据时间50%战力，非活跃时间20%战力。"
+                  />
+                </div>
+                
+                <!-- 胜率趋势图表区域 -->
+                <div class="hourly-chart" style="margin-bottom: 20px;">
+                  <h5>胜率趋势图</h5>
+                  <div class="chart-container" style="height: 200px; position: relative; border: 1px solid #e4e7ed; border-radius: 4px; padding: 10px;">
+                    <div class="chart-axis" style="position: absolute; bottom: 0; left: 0; right: 0; height: 1px; background: #ddd;"></div>
+                    <div class="chart-bars" style="height: 180px; display: flex; align-items: end; justify-content: space-between;">
+                      <div 
+                        v-for="hour in comparisonResult.winRatePrediction.hourlyWinRates" 
+                        :key="hour.hour"
+                        class="chart-bar" 
+                        :style="{
+                          height: hour.faction1WinRate + '%',
+                          width: '3.8%',
+                          backgroundColor: hour.faction1WinRate > 50 ? '#67c23a' : '#f56c6c',
+                          opacity: 0.8,
+                          borderRadius: '2px 2px 0 0',
+                          position: 'relative'
+                        }"
+                        :title="`${hour.timeDisplay}: ${hour.faction1WinRate}%`"
+                      >
+                        <div style="position: absolute; bottom: -20px; font-size: 10px; text-align: center; width: 100%; color: #666;">
+                          {{ hour.hour % 4 === 0 ? hour.hour : '' }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- 详细数据表格 -->
+                <el-table 
+                  :data="comparisonResult.winRatePrediction.hourlyWinRates" 
+                  size="small" 
+                  max-height="400"
+                  stripe
+                >
+                  <el-table-column prop="timeDisplay" label="开战时间" width="100" align="center" />
+                  <el-table-column :label="`${comparisonResult.faction1.name} 胜率`" width="120" align="center">
+                    <template #default="{ row }">
+                      <el-tag 
+                        :type="row.faction1WinRate > 70 ? 'success' : row.faction1WinRate > 40 ? 'warning' : 'danger'" 
+                        size="small"
+                      >
+                        {{ row.faction1WinRate }}%
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="`${comparisonResult.faction2.name} 胜率`" width="120" align="center">
+                    <template #default="{ row }">
+                      <el-tag 
+                        :type="row.faction2WinRate > 70 ? 'success' : row.faction2WinRate > 40 ? 'warning' : 'danger'" 
+                        size="small"
+                      >
+                        {{ row.faction2WinRate }}%
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="`${comparisonResult.faction1.name} 有效人数`" width="120" align="center">
+                    <template #default="{ row }">
+                      {{ row.faction1Strength.activeMemberCount }} / {{ row.faction1Strength.memberCount }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="`${comparisonResult.faction2.name} 有效人数`" width="120" align="center">
+                    <template #default="{ row }">
+                      {{ row.faction2Strength.activeMemberCount }} / {{ row.faction2Strength.memberCount }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="`${comparisonResult.faction1.name} 实力`" width="120" align="center">
+                    <template #default="{ row }">
+                      {{ Math.round(row.faction1Strength.effectiveCombatPower) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="`${comparisonResult.faction2.name} 实力`" width="120" align="center">
+                    <template #default="{ row }">
+                      {{ Math.round(row.faction2Strength.effectiveCombatPower) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="实力比" width="100" align="center">
+                    <template #default="{ row }">
+                      <span :style="{ color: row.faction1Score > row.faction2Score ? '#67c23a' : '#f56c6c' }">
+                        {{ row.faction2Score > 0 ? (row.faction1Score / row.faction2Score).toFixed(2) : '∞' }}:1
+                      </span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                
+                <!-- 最优开战时间建议 -->
+                <div class="best-time-suggestion" style="margin-top: 20px;">
+                  <el-card>
+                    <template #header>
+                      <h5>🎯 最优开战时间建议</h5>
+                    </template>
+                    <el-row :gutter="20">
+                      <el-col :span="12">
+                        <div class="faction-best-times">
+                          <h6>{{ comparisonResult.faction1.name }} 最优时间段:</h6>
+                          <div class="best-times">
+                            <el-tag 
+                              v-for="hour in getBestTimesForFaction(comparisonResult.winRatePrediction.hourlyWinRates, 1)" 
+                              :key="hour.hour"
+                              type="success" 
+                              size="small" 
+                              style="margin: 2px;"
+                            >
+                              {{ hour.timeDisplay }} ({{ hour.faction1WinRate }}%)
+                            </el-tag>
+                          </div>
+                        </div>
+                      </el-col>
+                      <el-col :span="12">
+                        <div class="faction-best-times">
+                          <h6>{{ comparisonResult.faction2.name }} 最优时间段:</h6>
+                          <div class="best-times">
+                            <el-tag 
+                              v-for="hour in getBestTimesForFaction(comparisonResult.winRatePrediction.hourlyWinRates, 2)" 
+                              :key="hour.hour"
+                              type="success" 
+                              size="small" 
+                              style="margin: 2px;"
+                            >
+                              {{ hour.timeDisplay }} ({{ hour.faction2WinRate }}%)
+                            </el-tag>
+                          </div>
+                        </div>
+                      </el-col>
+                    </el-row>
+                  </el-card>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+          
           <div class="analysis-text">
             <el-card>
               <template #header>
@@ -1221,16 +1370,27 @@ const calculateBSPrediction = (userProfile, personalStats, criminalRecord) => {
       return { bs: 1000, bsScore: 63, confidence: 'low' } // 给一个最小默认值
     }
     
-    // 直接使用计算出的总属性值，不进行Rank修正
-    const finalBS = totalStats
+    // 3. 计算BS分数（新的分段计算公式）
+    let bsScore
+    const tenBillion = 10000000000 // 10b
     
-    // 计算BS分数 (开根号再乘2)
-    const bsScore = Math.sqrt(finalBS) * 2
+    if (totalStats < tenBillion) {
+      // 小于10b：使用原公式
+      bsScore = Math.sqrt(totalStats) * 2
+      console.log(`用户 ${profile?.name || 'Unknown'} 使用原公式: sqrt(${totalStats}) * 2 = ${bsScore}`)
+    } else {
+      // 大于等于10b：分段计算
+      const tenBillionBsScore = Math.sqrt(tenBillion) * 2 // 10b的BS分 = 200,000
+      const ratio = totalStats / tenBillion
+      const logRatio = Math.log10(ratio)
+      bsScore = tenBillionBsScore * (1 + logRatio)
+      console.log(`用户 ${profile?.name || 'Unknown'} 使用分段公式: ${tenBillionBsScore} * (1 + log10(${ratio})) = ${bsScore}`)
+    }
     
-    console.log(`用户 ${profile?.name || 'Unknown'} 最终结果: BS=${finalBS}, Score=${bsScore}`)
+    console.log(`用户 ${profile?.name || 'Unknown'} 最终结果: 总属性=${totalStats}, BS分=${bsScore}`)
     
     return {
-      bs: Math.floor(finalBS),
+      bs: Math.floor(totalStats),
       bsScore: Math.floor(bsScore),
       confidence: totalEnergy > 1000000 ? 'high' : totalEnergy > 100000 ? 'medium' : 'low'
     }
@@ -1996,46 +2156,46 @@ const calculateCombatPowerScore = (memberData) => {
     activityScore
   } = memberData
   
-  // 权重分配
+  // 新的权重分配（不包含BS）
   const weights = {
-    bs: 0.25,           // BS权重25%
-    activity: 0.35,     // 活跃度权重35%（最重要）
+    activity: 0.6,     // 活跃度权重60%
     attackQuality: 0.2, // 攻击质量权重20%
-    consistency: 0.1,   // 一致性权重10%
-    timeRange: 0.1      // 时间覆盖权重10%
+    consistency: 0.15,  // 一致性权重15%
+    timeRange: 0.05     // 时间覆盖权重5%
   }
   
-  // 1. BS分数（使用bsScore，上限15000）
-  const bsComponent = Math.min(bsScore, 15000) * weights.bs
-  
-  // 2. 活跃度分数（直接使用activityScore）
+  // 1. 活跃度分数
   const activityComponent = activityScore * weights.activity
   
-  // 3. 攻击质量分数（HOS占比和攻击强度）
+  // 2. 攻击质量分数（HOS占比和攻击强度）
   const hosBonus = hosPercentage * 2 // HOS占比每1%得2分
   const attackIntensity = fourMonthAttacks > 0 ? Math.min(fourMonthAttacks / 10, 50) : 0 // 每10枪得1分，上限50
   const qualityComponent = (hosBonus + attackIntensity) * weights.attackQuality
   
-  // 4. 一致性分数（最近一个月表现）
+  // 3. 一致性分数（最近一个月表现）
   const consistencyRatio = fourMonthAttacks > 0 ? oneMonthAttacks / (fourMonthAttacks / 4) : 0
   const consistencyComponent = Math.min(consistencyRatio * 100, 150) * weights.consistency
   
-  // 5. 时间覆盖分数
+  // 4. 时间覆盖分数
   const timeRangeComponent = (peakHours.length * 10) * weights.timeRange
   
-  // 总分
-  const totalScore = bsComponent + activityComponent + qualityComponent + consistencyComponent + timeRangeComponent
+  // 计算基础分数（不含BS）
+  const baseScore = activityComponent + qualityComponent + consistencyComponent + timeRangeComponent
   
-  console.log(`综合实力分计算 - BS:${bsComponent.toFixed(1)}, 活跃度:${activityComponent.toFixed(1)}, 质量:${qualityComponent.toFixed(1)}, 一致性:${consistencyComponent.toFixed(1)}, 时间:${timeRangeComponent.toFixed(1)}, 总分:${totalScore.toFixed(1)}`)
+  // 新公式：(基础分数 / 1000) * BS分
+  const finalScore = (baseScore / 1000) * bsScore
+  
+  console.log(`综合实力分计算 - 活跃度:${activityComponent.toFixed(1)}, 质量:${qualityComponent.toFixed(1)}, 一致性:${consistencyComponent.toFixed(1)}, 时间:${timeRangeComponent.toFixed(1)}, 基础分数:${baseScore.toFixed(1)}, BS分:${bsScore}, 最终分数:${finalScore.toFixed(1)}`)
   
   return {
-    totalScore: Math.round(totalScore),
+    totalScore: Math.round(finalScore),
     components: {
-      bs: Math.round(bsComponent),
       activity: Math.round(activityComponent),
       quality: Math.round(qualityComponent),
       consistency: Math.round(consistencyComponent),
-      timeRange: Math.round(timeRangeComponent)
+      timeRange: Math.round(timeRangeComponent),
+      baseScore: Math.round(baseScore),
+      bsMultiplier: bsScore
     }
   }
 }
@@ -2091,50 +2251,153 @@ const analyzeFactionStrength = (factionData) => {
   }
 }
 
-// 预测PVP胜率（重新设计）
+// 计算特定时间段的帮派有效实力
+const calculateFactionStrengthAtHour = (factionAnalysis, hour) => {
+  if (!factionAnalysis || !factionAnalysis.memberAnalysis) {
+    return {
+      effectiveCombatPower: 0,
+      effectiveActivityScore: 0,
+      activeMemberCount: 0,
+      memberCount: 0
+    }
+  }
+  
+  let totalEffectiveCombatPower = 0
+  let totalEffectiveActivityScore = 0
+  let activeMemberCount = 0
+  const totalMemberCount = factionAnalysis.memberAnalysis.length
+  
+  factionAnalysis.memberAnalysis.forEach(member => {
+    // 判断该成员在这个时间段是否活跃
+    const isActiveAtHour = member.peakHours.includes(hour)
+    
+    if (isActiveAtHour) {
+      // 活跃时间：100%战力
+      totalEffectiveCombatPower += member.combatPowerScore
+      totalEffectiveActivityScore += member.activityScore
+      activeMemberCount++
+    } else if (member.peakHours.length === 0) {
+      // 没有活跃时间数据：按50%战力计算
+      totalEffectiveCombatPower += member.combatPowerScore * 0.5
+      totalEffectiveActivityScore += member.activityScore * 0.5
+      activeMemberCount += 0.5
+    } else {
+      // 非活跃时间：按20%战力计算（可能在线但不是主要活跃时间）
+      totalEffectiveCombatPower += member.combatPowerScore * 0.2
+      totalEffectiveActivityScore += member.activityScore * 0.2
+      activeMemberCount += 0.2
+    }
+  })
+  
+  return {
+    effectiveCombatPower: totalMemberCount > 0 ? totalEffectiveCombatPower / totalMemberCount : 0,
+    effectiveActivityScore: totalMemberCount > 0 ? totalEffectiveActivityScore / totalMemberCount : 0,
+    activeMemberCount: Math.round(activeMemberCount * 10) / 10, // 保留一位小数
+    memberCount: totalMemberCount
+  }
+}
+
+// 计算24小时胜率表
+const calculate24HourWinRates = (faction1Analysis, faction2Analysis) => {
+  const hourlyWinRates = []
+  
+  for (let hour = 0; hour < 24; hour++) {
+    // 计算该时间段两帮的有效实力
+    const faction1HourStrength = calculateFactionStrengthAtHour(faction1Analysis, hour)
+    const faction2HourStrength = calculateFactionStrengthAtHour(faction2Analysis, hour)
+    
+    // 使用有效实力计算该时间段的胜率
+    const hourlyPrediction = predictHourlyWinRate(
+      faction1Analysis.name,
+      faction2Analysis.name,
+      faction1HourStrength,
+      faction2HourStrength
+    )
+    
+    hourlyWinRates.push({
+      hour,
+      timeDisplay: `${hour.toString().padStart(2, '0')}:00`,
+      faction1Strength: faction1HourStrength,
+      faction2Strength: faction2HourStrength,
+      faction1WinRate: hourlyPrediction.faction1WinRate,
+      faction2WinRate: hourlyPrediction.faction2WinRate,
+      faction1Score: hourlyPrediction.faction1Score,
+      faction2Score: hourlyPrediction.faction2Score
+    })
+  }
+  
+  return hourlyWinRates
+}
+
+// 计算特定时间的胜率
+const predictHourlyWinRate = (faction1Name, faction2Name, faction1Strength, faction2Strength) => {
+  // 权重分配（与主预测相同）
+  const combatPowerWeight = 0.7
+  const activityWeight = 0.2
+  const memberCountWeight = 0.1
+  
+  // 计算有效评分
+  const faction1Score = (
+    (faction1Strength.effectiveCombatPower / 1000) * combatPowerWeight +
+    (faction1Strength.effectiveActivityScore / 100) * activityWeight +
+    (faction1Strength.activeMemberCount / 50) * memberCountWeight
+  ) * 100
+  
+  const faction2Score = (
+    (faction2Strength.effectiveCombatPower / 1000) * combatPowerWeight +
+    (faction2Strength.effectiveActivityScore / 100) * activityWeight +
+    (faction2Strength.activeMemberCount / 50) * memberCountWeight
+  ) * 100
+  
+  // 计算胜率（与主预测逻辑相同）
+  let faction1WinRate, faction2WinRate
+  
+  if (faction1Score === 0 && faction2Score === 0) {
+    faction1WinRate = 50
+    faction2WinRate = 50
+  } else if (faction2Score === 0) {
+    faction1WinRate = 100
+    faction2WinRate = 0
+  } else if (faction1Score === 0) {
+    faction1WinRate = 0
+    faction2WinRate = 100
+  } else {
+    const scoreDiff = faction1Score - faction2Score
+    const avgScore = (faction1Score + faction2Score) / 2
+    const normalizedDiff = scoreDiff / avgScore * 8
+    const sigmoidValue = 1 / (1 + Math.exp(-normalizedDiff))
+    
+    faction1WinRate = Math.round(sigmoidValue * 100)
+    faction2WinRate = 100 - faction1WinRate
+    
+    faction1WinRate = Math.max(0, Math.min(100, faction1WinRate))
+    faction2WinRate = Math.max(0, Math.min(100, faction2WinRate))
+  }
+  
+  return {
+    faction1WinRate,
+    faction2WinRate,
+    faction1Score,
+    faction2Score
+  }
+}
+
+// 预测PVP胜率（重新设计，增加24小时分析）
 const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
   if (!faction1Analysis || !faction2Analysis) {
     return { faction1WinRate: 50, faction2WinRate: 50, analysis: '数据不足，无法预测' }
   }
   
-  // 新的权重分配：更重视活跃度和综合实力
-  const combatPowerWeight = 0.5    // 综合实力权重50%
-  const activityWeight = 0.3       // 活跃度权重30%
-  const memberCountWeight = 0.1    // 人数权重10%
-  const bsWeight = 0.1            // BS权重降低到10%
+  // 计算24小时胜率表
+  const hourlyWinRates = calculate24HourWinRates(faction1Analysis, faction2Analysis)
   
-  // 计算两帮的综合评分
-  const faction1Score = (
-    (faction1Analysis.averageCombatPower / 100) * combatPowerWeight +
-    (faction1Analysis.averageActivityScore / 100) * activityWeight +
-    (faction1Analysis.memberCount / 50) * memberCountWeight +
-    (faction1Analysis.averageBS / 10000) * bsWeight
-  ) * 100
+  // 计算平均胜率
+  const avgFaction1WinRate = Math.round(
+    hourlyWinRates.reduce((sum, hour) => sum + hour.faction1WinRate, 0) / 24
+  )
+  const avgFaction2WinRate = 100 - avgFaction1WinRate
   
-  const faction2Score = (
-    (faction2Analysis.averageCombatPower / 100) * combatPowerWeight +
-    (faction2Analysis.averageActivityScore / 100) * activityWeight +
-    (faction2Analysis.memberCount / 50) * memberCountWeight +
-    (faction2Analysis.averageBS / 10000) * bsWeight
-  ) * 100
-  
-  console.log(`胜率计算 - 帮派1评分:${faction1Score}, 帮派2评分:${faction2Score}`)
-  
-  // 修复胜率计算逻辑：使用更平滑的函数
-  const scoreDiff = faction1Score - faction2Score
-  const maxDiff = Math.max(faction1Score, faction2Score) || 1 // 避免除零
-  
-  // 使用sigmoid函数计算胜率，避免极端值
-  const normalizedDiff = scoreDiff / maxDiff * 5 // 缩放系数
-  const sigmoidValue = 1 / (1 + Math.exp(-normalizedDiff))
-  
-  let faction1WinRate = Math.round(sigmoidValue * 100)
-  
-  // 确保胜率在合理范围内（15%-85%）
-  faction1WinRate = Math.max(15, Math.min(85, faction1WinRate))
-  const faction2WinRate = 100 - faction1WinRate
-  
-  console.log(`最终胜率 - 帮派1:${faction1WinRate}%, 帮派2:${faction2WinRate}%`)
+  console.log(`24小时平均胜率 - 帮派1:${avgFaction1WinRate}%, 帮派2:${avgFaction2WinRate}%`)
   
   // 生成格式化的分析说明
   const analysisData = {
@@ -2142,26 +2405,27 @@ const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
       name: faction1Analysis.name,
       averageBS: formatBSValue(Math.round(faction1Analysis.averageBS)),
       activityScore: Math.round(faction1Analysis.averageActivityScore),
-      combatPowerScore: Math.round(faction1Analysis.averageCombatPower), // 新增
+      combatPowerScore: Math.round(faction1Analysis.averageCombatPower),
       memberCount: faction1Analysis.memberCount,
-      score: Math.round(faction1Score)
+      score: Math.round(hourlyWinRates.reduce((sum, hour) => sum + hour.faction1Score, 0) / 24)
     },
     faction2: {
       name: faction2Analysis.name,
       averageBS: formatBSValue(Math.round(faction2Analysis.averageBS)),
       activityScore: Math.round(faction2Analysis.averageActivityScore),
-      combatPowerScore: Math.round(faction2Analysis.averageCombatPower), // 新增
+      combatPowerScore: Math.round(faction2Analysis.averageCombatPower),
       memberCount: faction2Analysis.memberCount,
-      score: Math.round(faction2Score)
+      score: Math.round(hourlyWinRates.reduce((sum, hour) => sum + hour.faction2Score, 0) / 24)
     }
   }
   
   return {
-    faction1WinRate,
-    faction2WinRate,
+    faction1WinRate: avgFaction1WinRate,
+    faction2WinRate: avgFaction2WinRate,
     analysisData: analysisData,
-    faction1Score,
-    faction2Score
+    faction1Score: analysisData.faction1.score,
+    faction2Score: analysisData.faction2.score,
+    hourlyWinRates: hourlyWinRates // 新增：24小时详细数据
   }
 }
 
@@ -2678,6 +2942,22 @@ const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') =>
     revengePercentage: fourMonthAttacks > 0 ? (revengeAttacks / fourMonthAttacks * 100) : 0,
     peakHours
   }
+}
+
+// 获取帮派最优开战时间
+const getBestTimesForFaction = (hourlyWinRates, factionNumber) => {
+  if (!hourlyWinRates || hourlyWinRates.length === 0) return []
+  
+  // 根据帮派编号选择胜率字段
+  const winRateField = factionNumber === 1 ? 'faction1WinRate' : 'faction2WinRate'
+  
+  // 按胜率排序，取前5个最优时间
+  const sortedHours = [...hourlyWinRates]
+    .sort((a, b) => b[winRateField] - a[winRateField])
+    .slice(0, 5)
+    .sort((a, b) => a.hour - b.hour) // 按时间顺序重新排列
+  
+  return sortedHours
 }
 </script>
 
