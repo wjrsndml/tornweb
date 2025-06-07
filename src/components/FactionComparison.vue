@@ -234,7 +234,7 @@
                     title="说明" 
                     type="info" 
                     :closable="false"
-                    description="根据成员活跃时间段计算不同开战时间的胜率。活跃时间100%战力，无数据时间50%战力，非活跃时间20%战力。"
+                    description="根据成员活跃时间段计算不同开战时间的胜率。活跃时间100%战力，无数据时间80%战力，非活跃时间60%战力。"
                   />
                 </div>
                 
@@ -2277,15 +2277,15 @@ const calculateFactionStrengthAtHour = (factionAnalysis, hour) => {
       totalEffectiveActivityScore += member.activityScore
       activeMemberCount++
     } else if (member.peakHours.length === 0) {
-      // 没有活跃时间数据：按50%战力计算
-      totalEffectiveCombatPower += member.combatPowerScore * 0.5
-      totalEffectiveActivityScore += member.activityScore * 0.5
-      activeMemberCount += 0.5
+      // 没有活跃时间数据：按80%战力计算（轻微减少）
+      totalEffectiveCombatPower += member.combatPowerScore * 0.8
+      totalEffectiveActivityScore += member.activityScore * 0.8
+      activeMemberCount += 0.8
     } else {
-      // 非活跃时间：按20%战力计算（可能在线但不是主要活跃时间）
-      totalEffectiveCombatPower += member.combatPowerScore * 0.2
-      totalEffectiveActivityScore += member.activityScore * 0.2
-      activeMemberCount += 0.2
+      // 非活跃时间：按60%战力计算（开战时间影响约40%）
+      totalEffectiveCombatPower += member.combatPowerScore * 0.6
+      totalEffectiveActivityScore += member.activityScore * 0.6
+      activeMemberCount += 0.6
     }
   })
   
