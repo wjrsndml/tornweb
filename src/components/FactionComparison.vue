@@ -23,6 +23,7 @@
           <div class="api-help-text">
             <el-text size="small" type="info">
               • 每行一个API密钥<br>
+              • 同一个人的API密钥只能使用一个<br>
               • 支持多密钥并行请求加速<br>
               • 单个密钥限制50次/分钟
             </el-text>
@@ -230,6 +231,7 @@
                     <div class="faction-analysis">
                       <h5>{{ comparisonResult.winRatePrediction.analysisData.faction1.name }}</h5>
                       <ul>
+                        <li>综合实力分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.combatPowerScore }}</strong></li>
                         <li>平均BS: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.averageBS }}</strong></li>
                         <li>活跃度分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.activityScore }}</strong></li>
                         <li>成员数量: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.memberCount }}</strong> 人</li>
@@ -241,6 +243,7 @@
                     <div class="faction-analysis">
                       <h5>{{ comparisonResult.winRatePrediction.analysisData.faction2.name }}</h5>
                       <ul>
+                        <li>综合实力分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.combatPowerScore }}</strong></li>
                         <li>平均BS: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.averageBS }}</strong></li>
                         <li>活跃度分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.activityScore }}</strong></li>
                         <li>成员数量: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.memberCount }}</strong> 人</li>
@@ -271,6 +274,11 @@
               faction2: formatBSValue(Math.round(comparisonResult.faction2Analysis.averageBS)),
               faction1Raw: Math.round(comparisonResult.faction1Analysis.averageBS),
               faction2Raw: Math.round(comparisonResult.faction2Analysis.averageBS)
+            },
+            {
+              metric: '综合实力分',
+              faction1: Math.round(comparisonResult.faction1Analysis.averageCombatPower),
+              faction2: Math.round(comparisonResult.faction2Analysis.averageCombatPower)
             },
             {
               metric: '四个月平均开枪数',
@@ -323,10 +331,17 @@
                 :data="comparisonResult.faction1Analysis.memberAnalysis" 
                 size="small"
                 max-height="600"
-                :default-sort="{ prop: 'activityScore', order: 'descending' }"
+                :default-sort="{ prop: 'combatPowerScore', order: 'descending' }"
               >
                 <el-table-column prop="name" label="成员名" width="120" fixed="left" />
                 <el-table-column prop="id" label="ID" width="80" />
+                <el-table-column prop="combatPowerScore" label="综合实力分" width="100" align="center" sortable>
+                  <template #default="{ row }">
+                    <el-tag :type="row.combatPowerScore > 300 ? 'danger' : row.combatPowerScore > 200 ? 'warning' : row.combatPowerScore > 100 ? 'success' : 'info'" size="small">
+                      {{ row.combatPowerScore }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="estimatedBS" label="预估BS" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
@@ -375,10 +390,17 @@
                 :data="comparisonResult.faction2Analysis.memberAnalysis" 
                 size="small"
                 max-height="600"
-                :default-sort="{ prop: 'activityScore', order: 'descending' }"
+                :default-sort="{ prop: 'combatPowerScore', order: 'descending' }"
               >
                 <el-table-column prop="name" label="成员名" width="120" fixed="left" />
                 <el-table-column prop="id" label="ID" width="80" />
+                <el-table-column prop="combatPowerScore" label="综合实力分" width="100" align="center" sortable>
+                  <template #default="{ row }">
+                    <el-tag :type="row.combatPowerScore > 300 ? 'danger' : row.combatPowerScore > 200 ? 'warning' : row.combatPowerScore > 100 ? 'success' : 'info'" size="small">
+                      {{ row.combatPowerScore }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="estimatedBS" label="预估BS" width="100" align="center" sortable>
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
@@ -611,7 +633,121 @@ class ApiRequestQueue {
   }
 }
 
-// API请求函数
+// 重试配置
+const RETRY_CONFIG = {
+  maxRetries: 3, // 最大重试次数
+  baseDelay: 1000, // 基础延迟（毫秒）
+  maxDelay: 30000, // 最大延迟（毫秒）
+  exponentialBase: 2, // 指数退避基数
+  jitterFactor: 0.1 // 抖动因子，避免所有请求同时重试
+}
+
+// 判断错误是否应该重试
+const shouldRetryError = (error) => {
+  // 如果是取消请求，不重试
+  if (error.name === 'AbortError' || error.message === '请求被取消') {
+    return false
+  }
+  
+  // 如果是网络错误，重试
+  if (!error.response && (error.code === 'ECONNRESET' || error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED')) {
+    return true
+  }
+  
+  // 如果有响应，根据状态码判断
+  if (error.response) {
+    const status = error.response.status
+    // 5xx 服务器错误 - 重试
+    if (status >= 500) return true
+    // 429 请求过多 - 重试
+    if (status === 429) return true
+    // 408 请求超时 - 重试
+    if (status === 408) return true
+    // 502, 503, 504 网关错误 - 重试
+    if ([502, 503, 504].includes(status)) return true
+    
+    // 检查Torn API特定错误
+    if (error.response.data && error.response.data.error) {
+      const tornError = error.response.data.error
+      // API密钥过期或无效 - 不重试
+      if ([1, 2].includes(tornError.code)) return false
+      // 权限不足 - 不重试
+      if ([7, 8].includes(tornError.code)) return false
+      // 用户不存在或帮派不存在 - 不重试
+      if ([6, 23].includes(tornError.code)) return false
+      // 其他错误可以重试
+      return true
+    }
+    
+    // 4xx 客户端错误一般不重试（除了上面特殊的几种）
+    if (status >= 400 && status < 500) return false
+  }
+  
+  return true // 其他未知错误，默认重试
+}
+
+// 计算重试延迟（指数退避 + 抖动）
+const calculateRetryDelay = (attempt) => {
+  const baseDelay = RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.exponentialBase, attempt)
+  const jitter = baseDelay * RETRY_CONFIG.jitterFactor * (Math.random() * 2 - 1)
+  const delay = Math.min(baseDelay + jitter, RETRY_CONFIG.maxDelay)
+  return Math.max(delay, 0)
+}
+
+// 带重试的API请求函数
+const fetchApiWithRetry = async (endpoint, apiKey, options = {}) => {
+  const { maxRetries = RETRY_CONFIG.maxRetries, context = 'API请求' } = options
+  let lastError = null
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // 检查是否被取消
+      if (abortController.value?.signal.aborted) {
+        throw new Error('请求被取消')
+      }
+      
+      const result = await fetchApi(endpoint, apiKey)
+      
+      // 如果成功且之前有重试，记录成功信息
+      if (attempt > 0) {
+        console.log(`${context} 重试成功: ${endpoint} (第${attempt}次重试)`)
+      }
+      
+      return result
+    } catch (error) {
+      lastError = error
+      
+      // 如果是最后一次尝试，或者错误不应该重试，直接抛出
+      if (attempt === maxRetries || !shouldRetryError(error)) {
+        if (attempt > 0) {
+          console.error(`${context} 重试失败，已达到最大重试次数: ${endpoint}`, error)
+        }
+        throw error
+      }
+      
+      // 计算重试延迟
+      const delay = calculateRetryDelay(attempt)
+      console.warn(`${context} 失败，将在 ${Math.round(delay/1000)}s 后进行第${attempt + 1}次重试: ${endpoint}`, error.message)
+      
+      // 更新状态消息显示重试信息
+      if (statusMessage.value && !statusMessage.value.includes('已取消')) {
+        statusMessage.value = `${context} 失败，正在重试... (第${attempt + 1}次重试)`
+      }
+      
+      // 等待重试延迟
+      await new Promise(resolve => setTimeout(resolve, delay))
+      
+      // 再次检查是否被取消
+      if (abortController.value?.signal.aborted) {
+        throw new Error('请求被取消')
+      }
+    }
+  }
+  
+  throw lastError
+}
+
+// API请求函数（保持原有逻辑不变）
 const fetchApi = async (endpoint, apiKey) => {
   let url = `${API_BASE_URL}${endpoint}`
   if (url.includes('?')) {
@@ -624,7 +760,8 @@ const fetchApi = async (endpoint, apiKey) => {
   
   try {
     const response = await axios.get(url, {
-      signal: abortController.value?.signal
+      signal: abortController.value?.signal,
+      timeout: 30000 // 30秒超时
     })
     
     console.log(`API响应成功:`, response.data)
@@ -1307,7 +1444,7 @@ const updateDetailedProgress = (key, label, step, total, status = 'active') => {
   }
 }
 
-// 获取帮派基本信息
+// 获取帮派基本信息（增加重试机制）
 const getFactionInfo = async (factionId, requestQueue) => {
   const cacheKey = getCacheKey('faction', factionId)
   let cached = getCachedData(cacheKey)
@@ -1319,7 +1456,9 @@ const getFactionInfo = async (factionId, requestQueue) => {
   statusMessage.value = `正在获取帮派 ${factionId} 的基本信息...`
   
   const data = await requestQueue.addRequest(async (apiKey) => {
-    return await fetchApi(`/faction/${factionId}`, apiKey)
+    return await fetchApiWithRetry(`/faction/${factionId}`, apiKey, {
+      context: `帮派 ${factionId} 基本信息`
+    })
   })
   
   // 根据实际数据结构提取帮派信息
@@ -1333,7 +1472,7 @@ const getFactionInfo = async (factionId, requestQueue) => {
   return factionInfo
 }
 
-// 获取帮派成员列表
+// 获取帮派成员列表（增加重试机制）
 const getFactionMembers = async (factionId, requestQueue) => {
   const cacheKey = getCacheKey('members', factionId)
   let cached = getCachedData(cacheKey)
@@ -1345,7 +1484,9 @@ const getFactionMembers = async (factionId, requestQueue) => {
   statusMessage.value = `正在获取帮派 ${factionId} 的成员列表...`
   
   const data = await requestQueue.addRequest(async (apiKey) => {
-    return await fetchApi(`/faction/${factionId}/members?striptags=true`, apiKey)
+    return await fetchApiWithRetry(`/faction/${factionId}/members?striptags=true`, apiKey, {
+      context: `帮派 ${factionId} 成员列表`
+    })
   })
   
   // 根据实际数据结构提取成员信息
@@ -1365,7 +1506,7 @@ const getFactionMembers = async (factionId, requestQueue) => {
   return membersObj
 }
 
-// 获取成员个人数据
+// 获取成员个人数据（增加重试机制）
 const getMemberPersonalStats = async (memberId, requestQueue, memberIndex, totalMembers, factionId) => {
   const cacheKey = getCacheKey('personalstats', memberId)
   let cached = getCachedData(cacheKey)
@@ -1383,13 +1524,17 @@ const getMemberPersonalStats = async (memberId, requestQueue, memberIndex, total
       throw new Error('请求被取消')
     }
     
-    // 同时获取用户基本信息和个人统计
+    // 同时获取用户基本信息和个人统计（增加重试）
     const [profileData, personalStatsData] = await Promise.all([
       requestQueue.addRequest(async (apiKey) => {
-        return await fetchApi(`/user/${memberId}`, apiKey)
+        return await fetchApiWithRetry(`/user/${memberId}`, apiKey, {
+          context: `成员 ${memberId} 基本信息`
+        })
       }),
       requestQueue.addRequest(async (apiKey) => {
-        return await fetchApi(`/user/${memberId}/personalstats?cat=all`, apiKey)
+        return await fetchApiWithRetry(`/user/${memberId}/personalstats?cat=all`, apiKey, {
+          context: `成员 ${memberId} 个人统计`
+        })
       })
     ])
     
@@ -1421,7 +1566,7 @@ const getMemberPersonalStats = async (memberId, requestQueue, memberIndex, total
   }
 }
 
-// 获取帮派RW数据
+// 获取帮派RW数据（增加重试机制）
 const getFactionRankedWars = async (factionId, requestQueue) => {
   const fourMonthsAgo = getFourMonthsAgo()
   const cacheKey = getCacheKey('rankedwars', factionId, getFourMonthsAgoDateString())
@@ -1434,9 +1579,11 @@ const getFactionRankedWars = async (factionId, requestQueue) => {
   statusMessage.value = `正在获取帮派 ${factionId} 的RW数据...`
   
   try {
-    // 1. 获取基础RW列表
+    // 1. 获取基础RW列表（增加重试）
     const data = await requestQueue.addRequest(async (apiKey) => {
-      return await fetchApi(`/faction/${factionId}/rankedwars`, apiKey)
+      return await fetchApiWithRetry(`/faction/${factionId}/rankedwars`, apiKey, {
+        context: `帮派 ${factionId} RW列表`
+      })
     })
     
     // 提取RW数据
@@ -1463,7 +1610,7 @@ const getFactionRankedWars = async (factionId, requestQueue) => {
     console.log(`帮派 ${factionId} 过滤后剩余 ${Object.keys(recentRankedWars).length} 条最近四个月的RW记录`)
     console.log(`帮派 ${factionId} 真实RW ID示例:`, Object.keys(recentRankedWars).slice(0, 3))
     
-    // 3. 高度并发获取每个RW的详细报告
+    // 3. 高度并发获取每个RW的详细报告（增加重试机制）
     const detailedRankedWars = []
     const warIds = Object.keys(recentRankedWars) // 这些现在是真实的war.id
     const apiKeys = getValidApiKeys()
@@ -1495,7 +1642,10 @@ const getFactionRankedWars = async (factionId, requestQueue) => {
             console.log(`API请求URL: /faction/${warId}/rankedwarreport`)
             console.log(`RW ID类型和值:`, { warId, type: typeof warId, isString: typeof warId === 'string' })
             
-            const reportData = await fetchApi(`/faction/${warId}/rankedwarreport`, apiKey)
+            // 使用重试机制获取RW详细报告
+            const reportData = await fetchApiWithRetry(`/faction/${warId}/rankedwarreport`, apiKey, {
+              context: `RW ${warId} 详细报告`
+            })
             
             if (abortController.value?.signal.aborted) {
               throw new Error('请求被取消')
@@ -1564,7 +1714,7 @@ const getFactionRankedWars = async (factionId, requestQueue) => {
   }
 }
 
-// 获取帮派Chain数据（基于RW时间范围）
+// 获取帮派Chain数据（增加重试机制）
 const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
   const fourMonthsAgo = getFourMonthsAgo()
   const cacheKey = getCacheKey('chains', factionId, getFourMonthsAgoDateString())
@@ -1598,9 +1748,11 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
     
     console.log(`帮派 ${factionId} 需要获取 ${timeRanges.length} 个RW时间段的Chain数据`)
     
-    // 2. 获取四个月内的所有Chain基础列表
+    // 2. 获取四个月内的所有Chain基础列表（增加重试）
     const data = await requestQueue.addRequest(async (apiKey) => {
-      return await fetchApi(`/faction/${factionId}/chains?from=${fourMonthsAgo}`, apiKey)
+      return await fetchApiWithRetry(`/faction/${factionId}/chains?from=${fourMonthsAgo}`, apiKey, {
+        context: `帮派 ${factionId} Chain列表`
+      })
     })
     
     const allChains = data.chains || data || []
@@ -1633,7 +1785,7 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
     
     console.log(`帮派 ${factionId} 过滤后剩余 ${Object.keys(rwChains).length} 条RW相关的Chain记录`)
     
-    // 4. 高度并发获取每个Chain的详细报告
+    // 4. 高度并发获取每个Chain的详细报告（增加重试机制）
     const detailedChains = []
     const chainIds = Object.keys(rwChains) // 这些现在是真实的chain.id
     const apiKeys = getValidApiKeys()
@@ -1663,7 +1815,10 @@ const getFactionChains = async (factionId, requestQueue, rankedWars = []) => {
           try {
             console.log(`Chain工作器 ${workerIndex + 1} 开始获取Chain ${chainId} 的详细报告`)
             
-            const reportData = await fetchApi(`/faction/${chainId}/chainreport`, apiKey)
+            // 使用重试机制获取Chain详细报告
+            const reportData = await fetchApiWithRetry(`/faction/${chainId}/chainreport`, apiKey, {
+              context: `Chain ${chainId} 详细报告`
+            })
             
             if (abortController.value?.signal.aborted) {
               throw new Error('请求被取消')
@@ -1806,161 +1961,83 @@ const analyzeChainActivity = (chains) => {
   return result
 }
 
-// 分析个人成员数据
-const analyzeMemberData = (members, personalStats, chains) => {
-  const memberAnalysis = []
+// 计算活跃度分数（重新设计，主要基于开枪数）
+const calculateActivityScore = (chainActivity, bsScore) => {
+  // 新的活跃度计算：主要看开枪数，不设上限
+  const fourMonthWeight = 0.6  // 四个月开枪数权重
+  const oneMonthWeight = 0.3   // 一个月开枪数权重  
+  const timeRangeWeight = 0.1  // 活跃时间段权重
   
-  console.log(`开始成员数据分析 - 成员数: ${Object.keys(members).length}, 个人数据: ${Object.keys(personalStats).length}`)
+  // 直接使用开枪数，不做标准化限制
+  const fourMonthScore = chainActivity.fourMonthAttacks * fourMonthWeight
+  const oneMonthScore = chainActivity.oneMonthAttacks * oneMonthWeight
   
-  Object.entries(members).forEach(([memberId, member]) => {
-    const memberData = personalStats[memberId]
-    if (!memberData || !memberData.personalstats) {
-      console.warn(`成员 ${member.name} 缺少个人数据`)
-      return
-    }
-    
-    // 计算BS预测
-    const bsPrediction = calculateBSPrediction(
-      memberData.profile || {
-        name: member.name,
-        age: member.days_in_faction || 100,
-        level: member.level,
-        rank: member.rank || 'Average',
-        last_action: { timestamp: Math.floor(Date.now() / 1000) - 3600 },
-        networth: memberData.personalstats?.networth || 0
-      },
-      memberData.personalstats,
-      memberData.personalstats?.crimes || {}
-    )
-    
-    // 分析该成员在Chain中的活跃度
-    const memberChainActivity = analyzeMemberChainActivity(memberId, chains, member.name)
-    
-    // 计算活跃度分数
-    const activityScore = calculateActivityScore(memberChainActivity, bsPrediction.bsScore)
-    
-    const memberInfo = {
-      id: memberId,
-      name: member.name,
-      level: member.level,
-      rank: member.rank || 'Unknown',
-      estimatedBS: bsPrediction.bs,
-      bsScore: bsPrediction.bsScore,
-      confidence: bsPrediction.confidence,
-      fourMonthAttacks: memberChainActivity.fourMonthAttacks,
-      oneMonthAttacks: memberChainActivity.oneMonthAttacks,
-      hosPercentage: memberChainActivity.hosPercentage,
-      revengePercentage: memberChainActivity.revengePercentage,
-      peakHours: memberChainActivity.peakHours,
-      activityScore: activityScore
-    }
-    
-    memberAnalysis.push(memberInfo)
-  })
+  // 活跃时间段多样性加分（最多加20分）
+  const timeRangeBonus = chainActivity.peakHours.length > 0 ? 
+    Math.min(chainActivity.peakHours.length * 2.5, 20) : 0
   
-  console.log(`成员分析完成 - 处理了 ${memberAnalysis.length} 个成员`)
-  return memberAnalysis.sort((a, b) => b.activityScore - a.activityScore)
+  const finalScore = fourMonthScore + oneMonthScore + timeRangeBonus
+  
+  console.log(`活跃度分数计算: 四月攻击=${chainActivity.fourMonthAttacks}*${fourMonthWeight}=${fourMonthScore}, 一月攻击=${chainActivity.oneMonthAttacks}*${oneMonthWeight}=${oneMonthScore}, 时间多样性=${timeRangeBonus}, 最终分数=${finalScore}`)
+  
+  return Math.max(0, finalScore)
 }
 
-// 分析单个成员在Chain中的活跃度
-const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') => {
-  let fourMonthAttacks = 0
-  let oneMonthAttacks = 0
-  let hosAttacks = 0
-  let revengeAttacks = 0
-  const timeZoneHours = new Array(24).fill(0)
-  const oneMonthAgo = Math.floor(Date.now() / 1000) - (30 * 24 * 3600)
-  
-  chains.forEach((chainData) => {
-    if (chainData.report && chainData.report.attackers) {
-      // 在attackers数组中查找该成员
-      const memberAttacker = chainData.report.attackers.find(attacker => String(attacker.id) === String(memberId))
-      if (memberAttacker && memberAttacker.attacks) {
-        const attacks = memberAttacker.attacks
-        
-        const totalAttacks = attacks.total || 0
-        fourMonthAttacks += totalAttacks
-        hosAttacks += attacks.hospitalize || 0
-        revengeAttacks += attacks.retaliations || 0
-        
-        // 检查Chain是否在最近一个月内
-        if (chainData.report.start >= oneMonthAgo) {
-          oneMonthAttacks += totalAttacks
-        }
-        
-        // 活跃时间段分析 - 改进算法
-        if (totalAttacks > 0) {
-          const chainStart = new Date(chainData.report.start * 1000)
-          const chainEnd = new Date(chainData.report.end * 1000)
-          const chainDuration = (chainData.report.end - chainData.report.start) / 3600 // 小时
-          
-          // 根据Chain持续时间和攻击数量，估算攻击分布
-          for (let i = 0; i < totalAttacks; i++) {
-            // 在Chain持续时间内均匀分布攻击时间
-            const attackOffset = (chainDuration * i / totalAttacks) // 攻击在Chain中的相对时间（小时）
-            const attackTime = new Date(chainStart.getTime() + attackOffset * 3600 * 1000)
-            const beijingHour = (attackTime.getUTCHours() + 8) % 24
-            timeZoneHours[beijingHour]++
-          }
-        }
-      }
-    }
-  })
-  
-  // 计算个人活跃时间段
-  const peakHours = []
-  if (fourMonthAttacks > 0) {
-    const maxActivity = Math.max(...timeZoneHours)
-    const threshold = Math.max(1, maxActivity * 0.3) // 降低阈值到30%
-    
-    for (let hour = 0; hour < 24; hour++) {
-      if (timeZoneHours[hour] >= threshold) {
-        peakHours.push(hour)
-      }
-    }
-  }
-  
-  return {
+// 计算综合实力分（新增）
+const calculateCombatPowerScore = (memberData) => {
+  const {
+    estimatedBS,
+    bsScore,
     fourMonthAttacks,
     oneMonthAttacks,
-    hosPercentage: fourMonthAttacks > 0 ? (hosAttacks / fourMonthAttacks * 100) : 0,
-    revengePercentage: fourMonthAttacks > 0 ? (revengeAttacks / fourMonthAttacks * 100) : 0,
-    peakHours
+    hosPercentage,
+    revengePercentage,
+    peakHours,
+    activityScore
+  } = memberData
+  
+  // 权重分配
+  const weights = {
+    bs: 0.25,           // BS权重25%
+    activity: 0.35,     // 活跃度权重35%（最重要）
+    attackQuality: 0.2, // 攻击质量权重20%
+    consistency: 0.1,   // 一致性权重10%
+    timeRange: 0.1      // 时间覆盖权重10%
   }
-}
-
-// 计算活跃度分数（BS分数和开枪数的加权）
-const calculateActivityScore = (chainActivity, bsScore) => {
-  const attackWeight = 0.3 // 开枪数权重
-  const bsWeight = 0.4 // BS分数权重
-  const recentActivityWeight = 0.2 // 最近活跃度权重
-  const specialAttackWeight = 0.1 // 特殊攻击权重
   
-  // 标准化四个月开枪数（假设40枪/四个月为平均水平）
-  const normalizedFourMonthAttacks = Math.min(chainActivity.fourMonthAttacks / 40, 3) * 100
+  // 1. BS分数（使用bsScore，上限15000）
+  const bsComponent = Math.min(bsScore, 15000) * weights.bs
   
-  // 标准化最近一个月开枪数（假设10枪/月为平均水平）
-  const normalizedRecentAttacks = Math.min(chainActivity.oneMonthAttacks / 10, 3) * 100
+  // 2. 活跃度分数（直接使用activityScore）
+  const activityComponent = activityScore * weights.activity
   
-  // 标准化BS分数（假设5000为平均水平）
-  const normalizedBS = Math.min(bsScore / 5000, 3) * 100
+  // 3. 攻击质量分数（HOS占比和攻击强度）
+  const hosBonus = hosPercentage * 2 // HOS占比每1%得2分
+  const attackIntensity = fourMonthAttacks > 0 ? Math.min(fourMonthAttacks / 10, 50) : 0 // 每10枪得1分，上限50
+  const qualityComponent = (hosBonus + attackIntensity) * weights.attackQuality
   
-  // 特殊攻击奖励（HOS和复仇攻击的权重）
-  const specialAttackBonus = (chainActivity.hosPercentage + chainActivity.revengePercentage) / 2
+  // 4. 一致性分数（最近一个月表现）
+  const consistencyRatio = fourMonthAttacks > 0 ? oneMonthAttacks / (fourMonthAttacks / 4) : 0
+  const consistencyComponent = Math.min(consistencyRatio * 100, 150) * weights.consistency
   
-  // 活跃时间段多样性奖励
-  const timeRangeBonus = chainActivity.peakHours.length > 0 ? Math.min(chainActivity.peakHours.length / 8 * 20, 20) : 0
+  // 5. 时间覆盖分数
+  const timeRangeComponent = (peakHours.length * 10) * weights.timeRange
   
-  const finalScore = (
-    attackWeight * normalizedFourMonthAttacks +
-    bsWeight * normalizedBS +
-    recentActivityWeight * normalizedRecentAttacks +
-    specialAttackWeight * specialAttackBonus
-  ) + timeRangeBonus
+  // 总分
+  const totalScore = bsComponent + activityComponent + qualityComponent + consistencyComponent + timeRangeComponent
   
-  console.log(`活跃度分数计算: 四月攻击=${normalizedFourMonthAttacks}, BS=${normalizedBS}, 最近攻击=${normalizedRecentAttacks}, 特殊攻击=${specialAttackBonus}, 时间多样性=${timeRangeBonus}, 最终分数=${finalScore}`)
+  console.log(`综合实力分计算 - BS:${bsComponent.toFixed(1)}, 活跃度:${activityComponent.toFixed(1)}, 质量:${qualityComponent.toFixed(1)}, 一致性:${consistencyComponent.toFixed(1)}, 时间:${timeRangeComponent.toFixed(1)}, 总分:${totalScore.toFixed(1)}`)
   
-  return Math.max(0, finalScore) // 确保分数不为负
+  return {
+    totalScore: Math.round(totalScore),
+    components: {
+      bs: Math.round(bsComponent),
+      activity: Math.round(activityComponent),
+      quality: Math.round(qualityComponent),
+      consistency: Math.round(consistencyComponent),
+      timeRange: Math.round(timeRangeComponent)
+    }
+  }
 }
 
 // 主要的帮派实力分析函数
@@ -1982,13 +2059,17 @@ const analyzeFactionStrength = (factionData) => {
     factionData.chains
   )
   
-  // 计算帮派总实力分数
-  const totalActivityScore = memberAnalysis.reduce((sum, member) => sum + member.activityScore, 0)
-  const averageActivityScore = memberAnalysis.length > 0 ? totalActivityScore / memberAnalysis.length : 0
+  // 计算帮派总实力分数（使用新的综合实力分）
+  const totalCombatPower = memberAnalysis.reduce((sum, member) => sum + member.combatPowerScore, 0)
+  const averageCombatPower = memberAnalysis.length > 0 ? totalCombatPower / memberAnalysis.length : 0
   
   // 计算总BS和平均BS
   const totalBS = memberAnalysis.reduce((sum, member) => sum + member.estimatedBS, 0)
   const averageBS = memberAnalysis.length > 0 ? totalBS / memberAnalysis.length : 0
+  
+  // 计算总活跃度分数和平均活跃度分数
+  const totalActivityScore = memberAnalysis.reduce((sum, member) => sum + member.activityScore, 0)
+  const averageActivityScore = memberAnalysis.length > 0 ? totalActivityScore / memberAnalysis.length : 0
   
   return {
     name: factionData.name,
@@ -1999,6 +2080,8 @@ const analyzeFactionStrength = (factionData) => {
     averageActivityScore,
     totalBS,
     averageBS,
+    totalCombatPower,        // 新增
+    averageCombatPower,      // 新增
     averageAttacksPerMonth: memberAnalysis.length > 0 
       ? memberAnalysis.reduce((sum, m) => sum + m.oneMonthAttacks, 0) / memberAnalysis.length 
       : 0,
@@ -2008,34 +2091,50 @@ const analyzeFactionStrength = (factionData) => {
   }
 }
 
-// 预测PVP胜率
+// 预测PVP胜率（重新设计）
 const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
   if (!faction1Analysis || !faction2Analysis) {
     return { faction1WinRate: 50, faction2WinRate: 50, analysis: '数据不足，无法预测' }
   }
   
-  // 综合实力评分权重
-  const bsWeight = 0.6 // BS权重
-  const activityWeight = 0.3 // 活跃度权重
-  const memberCountWeight = 0.1 // 人数权重
+  // 新的权重分配：更重视活跃度和综合实力
+  const combatPowerWeight = 0.5    // 综合实力权重50%
+  const activityWeight = 0.3       // 活跃度权重30%
+  const memberCountWeight = 0.1    // 人数权重10%
+  const bsWeight = 0.1            // BS权重降低到10%
   
-  // 计算两帮的综合实力分数
+  // 计算两帮的综合评分
   const faction1Score = (
-    (faction1Analysis.averageBS / 10000) * bsWeight +
+    (faction1Analysis.averageCombatPower / 100) * combatPowerWeight +
     (faction1Analysis.averageActivityScore / 100) * activityWeight +
-    (faction1Analysis.memberCount / 50) * memberCountWeight
+    (faction1Analysis.memberCount / 50) * memberCountWeight +
+    (faction1Analysis.averageBS / 10000) * bsWeight
   ) * 100
   
   const faction2Score = (
-    (faction2Analysis.averageBS / 10000) * bsWeight +
+    (faction2Analysis.averageCombatPower / 100) * combatPowerWeight +
     (faction2Analysis.averageActivityScore / 100) * activityWeight +
-    (faction2Analysis.memberCount / 50) * memberCountWeight
+    (faction2Analysis.memberCount / 50) * memberCountWeight +
+    (faction2Analysis.averageBS / 10000) * bsWeight
   ) * 100
   
-  // 计算胜率（使用逻辑函数避免极端值）
+  console.log(`胜率计算 - 帮派1评分:${faction1Score}, 帮派2评分:${faction2Score}`)
+  
+  // 修复胜率计算逻辑：使用更平滑的函数
   const scoreDiff = faction1Score - faction2Score
-  const faction1WinRate = Math.round(50 + (scoreDiff / (1 + Math.abs(scoreDiff) / 20)) * 20)
+  const maxDiff = Math.max(faction1Score, faction2Score) || 1 // 避免除零
+  
+  // 使用sigmoid函数计算胜率，避免极端值
+  const normalizedDiff = scoreDiff / maxDiff * 5 // 缩放系数
+  const sigmoidValue = 1 / (1 + Math.exp(-normalizedDiff))
+  
+  let faction1WinRate = Math.round(sigmoidValue * 100)
+  
+  // 确保胜率在合理范围内（15%-85%）
+  faction1WinRate = Math.max(15, Math.min(85, faction1WinRate))
   const faction2WinRate = 100 - faction1WinRate
+  
+  console.log(`最终胜率 - 帮派1:${faction1WinRate}%, 帮派2:${faction2WinRate}%`)
   
   // 生成格式化的分析说明
   const analysisData = {
@@ -2043,6 +2142,7 @@ const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
       name: faction1Analysis.name,
       averageBS: formatBSValue(Math.round(faction1Analysis.averageBS)),
       activityScore: Math.round(faction1Analysis.averageActivityScore),
+      combatPowerScore: Math.round(faction1Analysis.averageCombatPower), // 新增
       memberCount: faction1Analysis.memberCount,
       score: Math.round(faction1Score)
     },
@@ -2050,14 +2150,15 @@ const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
       name: faction2Analysis.name,
       averageBS: formatBSValue(Math.round(faction2Analysis.averageBS)),
       activityScore: Math.round(faction2Analysis.averageActivityScore),
+      combatPowerScore: Math.round(faction2Analysis.averageCombatPower), // 新增
       memberCount: faction2Analysis.memberCount,
       score: Math.round(faction2Score)
     }
   }
   
   return {
-    faction1WinRate: Math.max(10, Math.min(90, faction1WinRate)), // 限制在10%-90%之间
-    faction2WinRate: Math.max(10, Math.min(90, faction2WinRate)),
+    faction1WinRate,
+    faction2WinRate,
     analysisData: analysisData,
     faction1Score,
     faction2Score
@@ -2198,6 +2299,7 @@ const fetchAllData = async () => {
     let processedCount = 0
     let successCount = 0
     let cacheHitCount = 0 // 缓存命中计数
+    let retryCount = 0 // 重试计数
     const memberQueue = [...allMembers] // 复制队列
     
     // 创建并发工作器，每个API密钥一个
@@ -2231,10 +2333,14 @@ const fetchAllData = async () => {
             cached = true
             cacheHitCount++
           } else {
-            // 缓存中没有，发起API请求
+            // 缓存中没有，发起API请求（使用重试机制）
             const [profileData, personalStatsData] = await Promise.all([
-              fetchApi(`/user/${member.id}`, apiKey),
-              fetchApi(`/user/${member.id}/personalstats?cat=all`, apiKey)
+              fetchApiWithRetry(`/user/${member.id}`, apiKey, {
+                context: `成员 ${member.id} 基本信息`
+              }),
+              fetchApiWithRetry(`/user/${member.id}/personalstats?cat=all`, apiKey, {
+                context: `成员 ${member.id} 个人统计`
+              })
             ])
             
             // 检查是否被取消
@@ -2274,14 +2380,20 @@ const fetchAllData = async () => {
             throw error
           }
           console.error(`工作器 ${workerIndex + 1} 获取成员 ${member.id} 数据失败:`, error)
+          
+          // 如果错误包含重试信息，增加重试计数
+          if (error.message.includes('重试')) {
+            retryCount++
+          }
         }
         
         // 更新进度
         processedCount++
         currentStep++
         const cacheHitRate = processedCount > 0 ? Math.round((cacheHitCount / processedCount) * 100) : 0
-        statusMessage.value = `正在获取成员个人数据... (${processedCount}/${allMembers.length}, 缓存命中率: ${cacheHitRate}%)`
-        updateProgress(currentStep, totalSteps, `已处理 ${processedCount}/${allMembers.length} 个成员，成功获取 ${successCount} 个，缓存命中 ${cacheHitCount} 个`)
+        const retryInfo = retryCount > 0 ? `, 重试次数: ${retryCount}` : ''
+        statusMessage.value = `正在获取成员个人数据... (${processedCount}/${allMembers.length}, 缓存命中率: ${cacheHitRate}%${retryInfo})`
+        updateProgress(currentStep, totalSteps, `已处理 ${processedCount}/${allMembers.length} 个成员，成功获取 ${successCount} 个，缓存命中 ${cacheHitCount} 个${retryInfo}`)
         updateDetailedProgress(`members_all`, `所有成员数据`, processedCount, allMembers.length)
         
         // 如果是从缓存获取的数据，不需要等待
@@ -2438,6 +2550,135 @@ const stopComparison = () => {
 onMounted(() => {
   updateCacheInfo()
 })
+
+// 分析个人成员数据
+const analyzeMemberData = (members, personalStats, chains) => {
+  const memberAnalysis = []
+  
+  console.log(`开始成员数据分析 - 成员数: ${Object.keys(members).length}, 个人数据: ${Object.keys(personalStats).length}`)
+  
+  Object.entries(members).forEach(([memberId, member]) => {
+    const memberData = personalStats[memberId]
+    if (!memberData || !memberData.personalstats) {
+      console.warn(`成员 ${member.name} 缺少个人数据`)
+      return
+    }
+    
+    // 计算BS预测
+    const bsPrediction = calculateBSPrediction(
+      memberData.profile || {
+        name: member.name,
+        age: member.days_in_faction || 100,
+        level: member.level,
+        rank: member.rank || 'Average',
+        last_action: { timestamp: Math.floor(Date.now() / 1000) - 3600 },
+        networth: memberData.personalstats?.networth || 0
+      },
+      memberData.personalstats,
+      memberData.personalstats?.crimes || {}
+    )
+    
+    // 分析该成员在Chain中的活跃度
+    const memberChainActivity = analyzeMemberChainActivity(memberId, chains, member.name)
+    
+    // 计算活跃度分数（新算法）
+    const activityScore = calculateActivityScore(memberChainActivity, bsPrediction.bsScore)
+    
+    // 准备成员基础信息
+    const memberInfo = {
+      id: memberId,
+      name: member.name,
+      level: member.level,
+      rank: member.rank || 'Unknown',
+      estimatedBS: bsPrediction.bs,
+      bsScore: bsPrediction.bsScore,
+      confidence: bsPrediction.confidence,
+      fourMonthAttacks: memberChainActivity.fourMonthAttacks,
+      oneMonthAttacks: memberChainActivity.oneMonthAttacks,
+      hosPercentage: memberChainActivity.hosPercentage,
+      revengePercentage: memberChainActivity.revengePercentage,
+      peakHours: memberChainActivity.peakHours,
+      activityScore: activityScore
+    }
+    
+    // 计算综合实力分
+    const combatPower = calculateCombatPowerScore(memberInfo)
+    memberInfo.combatPowerScore = combatPower.totalScore
+    memberInfo.combatPowerComponents = combatPower.components
+    
+    memberAnalysis.push(memberInfo)
+  })
+  
+  console.log(`成员分析完成 - 处理了 ${memberAnalysis.length} 个成员`)
+  return memberAnalysis.sort((a, b) => b.combatPowerScore - a.combatPowerScore) // 按综合实力分排序
+}
+
+// 分析单个成员在Chain中的活跃度
+const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') => {
+  let fourMonthAttacks = 0
+  let oneMonthAttacks = 0
+  let hosAttacks = 0
+  let revengeAttacks = 0
+  const timeZoneHours = new Array(24).fill(0)
+  const oneMonthAgo = Math.floor(Date.now() / 1000) - (30 * 24 * 3600)
+  
+  chains.forEach((chainData) => {
+    if (chainData.report && chainData.report.attackers) {
+      // 在attackers数组中查找该成员
+      const memberAttacker = chainData.report.attackers.find(attacker => String(attacker.id) === String(memberId))
+      if (memberAttacker && memberAttacker.attacks) {
+        const attacks = memberAttacker.attacks
+        
+        const totalAttacks = attacks.total || 0
+        fourMonthAttacks += totalAttacks
+        hosAttacks += attacks.hospitalize || 0
+        revengeAttacks += attacks.retaliations || 0
+        
+        // 检查Chain是否在最近一个月内
+        if (chainData.report.start >= oneMonthAgo) {
+          oneMonthAttacks += totalAttacks
+        }
+        
+        // 活跃时间段分析 - 改进算法
+        if (totalAttacks > 0) {
+          const chainStart = new Date(chainData.report.start * 1000)
+          const chainEnd = new Date(chainData.report.end * 1000)
+          const chainDuration = (chainData.report.end - chainData.report.start) / 3600 // 小时
+          
+          // 根据Chain持续时间和攻击数量，估算攻击分布
+          for (let i = 0; i < totalAttacks; i++) {
+            // 在Chain持续时间内均匀分布攻击时间
+            const attackOffset = (chainDuration * i / totalAttacks) // 攻击在Chain中的相对时间（小时）
+            const attackTime = new Date(chainStart.getTime() + attackOffset * 3600 * 1000)
+            const beijingHour = (attackTime.getUTCHours() + 8) % 24
+            timeZoneHours[beijingHour]++
+          }
+        }
+      }
+    }
+  })
+  
+  // 计算个人活跃时间段
+  const peakHours = []
+  if (fourMonthAttacks > 0) {
+    const maxActivity = Math.max(...timeZoneHours)
+    const threshold = Math.max(1, maxActivity * 0.3) // 降低阈值到30%
+    
+    for (let hour = 0; hour < 24; hour++) {
+      if (timeZoneHours[hour] >= threshold) {
+        peakHours.push(hour)
+      }
+    }
+  }
+  
+  return {
+    fourMonthAttacks,
+    oneMonthAttacks,
+    hosPercentage: fourMonthAttacks > 0 ? (hosAttacks / fourMonthAttacks * 100) : 0,
+    revengePercentage: fourMonthAttacks > 0 ? (revengeAttacks / fourMonthAttacks * 100) : 0,
+    peakHours
+  }
+}
 </script>
 
 <style scoped>
