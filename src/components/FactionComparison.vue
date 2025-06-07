@@ -234,7 +234,7 @@
                     title="说明" 
                     type="info" 
                     :closable="false"
-                    description="根据成员活跃时间段计算不同开战时间的胜率。活跃时间100%战力，无数据时间80%战力，非活跃时间60%战力。"
+                    description="根据成员睡觉时间段计算不同开战时间的胜率。活跃时间100%战力，睡觉时间30%战力。无数据成员按帮派平均睡觉时间估计。"
                   />
                 </div>
                 
@@ -514,10 +514,10 @@
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column label="活跃时间段" min-width="120">
+                <el-table-column label="睡觉时间段" min-width="120">
                   <template #default="{ row }">
-                    <span v-if="row.peakHours.length > 0" class="peak-hours">
-                      {{ formatPeakHours(row.peakHours) }}
+                    <span v-if="row.sleepPeriod" class="sleep-period">
+                      {{ formatSleepPeriod(row.sleepPeriod) }}
                     </span>
                     <span v-else style="color: #909399;">无数据</span>
                   </template>
@@ -573,10 +573,10 @@
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column label="活跃时间段" min-width="120">
+                <el-table-column label="睡觉时间段" min-width="120">
                   <template #default="{ row }">
-                    <span v-if="row.peakHours.length > 0" class="peak-hours">
-                      {{ formatPeakHours(row.peakHours) }}
+                    <span v-if="row.sleepPeriod" class="sleep-period">
+                      {{ formatSleepPeriod(row.sleepPeriod) }}
                     </span>
                     <span v-else style="color: #909399;">无数据</span>
                   </template>
@@ -1541,25 +1541,29 @@ const getMemberCount = (members) => {
   return Object.keys(members).length
 }
 
+// 格式化睡觉时间段
+const formatSleepPeriod = (sleepPeriod) => {
+  if (!sleepPeriod) return '无数据'
+  
+  const startHour = sleepPeriod.start
+  const endHour = (sleepPeriod.start + sleepPeriod.duration) % 24
+  
+  return `${startHour.toString().padStart(2, '0')}:00-${endHour.toString().padStart(2, '0')}:00 (${sleepPeriod.duration}h)`
+}
+
 // 格式化活跃时间段
-const formatPeakHours = (peakHours) => {
-  if (!peakHours || peakHours.length === 0) return '无数据'
+const formatPeakHours = (activeRanges) => {
+  if (!activeRanges || activeRanges.length === 0) return '无数据'
   
-  // 将连续的时间段合并
-  const ranges = []
-  let start = peakHours[0]
-  let end = peakHours[0]
-  
-  for (let i = 1; i < peakHours.length; i++) {
-    if (peakHours[i] === end + 1) {
-      end = peakHours[i]
+  // 格式化时间段范围
+  const ranges = activeRanges.map(range => {
+    if (range.start === range.end) {
+      return `${range.start.toString().padStart(2, '0')}:00`
     } else {
-      ranges.push(start === end ? `${start}:00` : `${start}:00-${end}:00`)
-      start = peakHours[i]
-      end = peakHours[i]
+      const endHour = (range.end + 1) % 24 // 结束时间+1小时表示区间
+      return `${range.start.toString().padStart(2, '0')}:00-${endHour.toString().padStart(2, '0')}:00`
     }
-  }
-  ranges.push(start === end ? `${start}:00` : `${start}:00-${end}:00`)
+  })
   
   return ranges.join(', ')
 }
@@ -2158,10 +2162,10 @@ const calculateCombatPowerScore = (memberData) => {
   
   // 新的权重分配（不包含BS）
   const weights = {
-    activity: 0.6,     // 活跃度权重60%
-    attackQuality: 0.2, // 攻击质量权重20%
-    consistency: 0.15,  // 一致性权重15%
-    timeRange: 0.05     // 时间覆盖权重5%
+    activity: 0.75,     // 活跃度权重75%
+    attackQuality: 0.15, // 攻击质量权重15%
+    consistency: 0.10,  // 一致性权重10%
+    timeRange: 0.0      // 时间覆盖权重0%
   }
   
   // 1. 活跃度分数
@@ -2268,7 +2272,7 @@ const calculateFactionStrengthAtHour = (factionAnalysis, hour) => {
   const totalMemberCount = factionAnalysis.memberAnalysis.length
   
   factionAnalysis.memberAnalysis.forEach(member => {
-    // 判断该成员在这个时间段是否活跃
+    // 判断该成员在这个时间段是否活跃（基于睡觉时间算法）
     const isActiveAtHour = member.peakHours.includes(hour)
     
     if (isActiveAtHour) {
@@ -2276,16 +2280,11 @@ const calculateFactionStrengthAtHour = (factionAnalysis, hour) => {
       totalEffectiveCombatPower += member.combatPowerScore
       totalEffectiveActivityScore += member.activityScore
       activeMemberCount++
-    } else if (member.peakHours.length === 0) {
-      // 没有活跃时间数据：按80%战力计算（轻微减少）
-      totalEffectiveCombatPower += member.combatPowerScore * 0.8
-      totalEffectiveActivityScore += member.activityScore * 0.8
-      activeMemberCount += 0.8
     } else {
-      // 非活跃时间：按60%战力计算（开战时间影响约40%）
-      totalEffectiveCombatPower += member.combatPowerScore * 0.6
-      totalEffectiveActivityScore += member.activityScore * 0.6
-      activeMemberCount += 0.6
+      // 睡觉时间：30%战力
+      totalEffectiveCombatPower += member.combatPowerScore * 0.3
+      totalEffectiveActivityScore += member.activityScore * 0.3
+      activeMemberCount += 0.3
     }
   })
   
@@ -2821,6 +2820,28 @@ const analyzeMemberData = (members, personalStats, chains) => {
   
   console.log(`开始成员数据分析 - 成员数: ${Object.keys(members).length}, 个人数据: ${Object.keys(personalStats).length}`)
   
+  // 第一遍：收集所有有数据成员的睡觉时间
+  const validSleepPeriods = []
+  
+  Object.entries(members).forEach(([memberId, member]) => {
+    const memberData = personalStats[memberId]
+    if (!memberData || !memberData.personalstats) {
+      return
+    }
+    
+    // 分析该成员在Chain中的活跃度
+    const memberChainActivity = analyzeMemberChainActivity(memberId, chains, member.name)
+    
+    // 如果该成员有攻击数据，收集其睡觉时间
+    if (memberChainActivity.fourMonthAttacks > 0 && memberChainActivity.sleepPeriod) {
+      validSleepPeriods.push(memberChainActivity.sleepPeriod)
+    }
+  })
+  
+  // 计算帮派平均睡觉时间
+  const factionSleepPeriod = calculateFactionAverageSleepPeriod(validSleepPeriods)
+  
+  // 第二遍：为所有成员分配睡觉时间和计算实力
   Object.entries(members).forEach(([memberId, member]) => {
     const memberData = personalStats[memberId]
     if (!memberData || !memberData.personalstats) {
@@ -2845,6 +2866,21 @@ const analyzeMemberData = (members, personalStats, chains) => {
     // 分析该成员在Chain中的活跃度
     const memberChainActivity = analyzeMemberChainActivity(memberId, chains, member.name)
     
+    // 如果成员无数据，使用帮派平均睡觉时间
+    if (memberChainActivity.fourMonthAttacks === 0) {
+      console.log(`成员 ${member.name} 无攻击数据，使用帮派平均睡觉时间`)
+      // 重新计算活跃时间段，使用帮派平均睡觉时间，但设为10小时
+      const estimatedSleepPeriod = {
+        start: factionSleepPeriod.start,
+        duration: 10 // 无数据成员固定10小时睡觉时间
+      }
+      const activeRanges = calculateActiveRanges(estimatedSleepPeriod)
+      
+      memberChainActivity.sleepPeriod = estimatedSleepPeriod
+      memberChainActivity.activeRanges = activeRanges.ranges
+      memberChainActivity.peakHours = activeRanges.activeHours
+    }
+    
     // 计算活跃度分数（新算法）
     const activityScore = calculateActivityScore(memberChainActivity, bsPrediction.bsScore)
     
@@ -2862,6 +2898,8 @@ const analyzeMemberData = (members, personalStats, chains) => {
       hosPercentage: memberChainActivity.hosPercentage,
       revengePercentage: memberChainActivity.revengePercentage,
       peakHours: memberChainActivity.peakHours,
+      sleepPeriod: memberChainActivity.sleepPeriod, // 睡觉时间段
+      activeRanges: memberChainActivity.activeRanges, // 活跃时间段范围
       activityScore: activityScore
     }
     
@@ -2875,6 +2913,25 @@ const analyzeMemberData = (members, personalStats, chains) => {
   
   console.log(`成员分析完成 - 处理了 ${memberAnalysis.length} 个成员`)
   return memberAnalysis.sort((a, b) => b.combatPowerScore - a.combatPowerScore) // 按综合实力分排序
+}
+
+// 计算帮派平均睡觉时间
+const calculateFactionAverageSleepPeriod = (validSleepPeriods) => {
+  if (validSleepPeriods.length === 0) {
+    // 如果没有任何有效数据，返回默认睡觉时间（凌晨2-10点）
+    return { start: 2, duration: 8 }
+  }
+  
+  // 计算所有有效睡觉时间的平均开始时间
+  const avgStartHour = validSleepPeriods.reduce((sum, period) => sum + period.start, 0) / validSleepPeriods.length
+  const avgDuration = validSleepPeriods.reduce((sum, period) => sum + period.duration, 0) / validSleepPeriods.length
+  
+  console.log(`帮派平均睡觉时间计算 - 有效数据: ${validSleepPeriods.length} 个, 平均开始时间: ${avgStartHour.toFixed(1)}, 平均时长: ${avgDuration.toFixed(1)}`)
+  
+  return {
+    start: Math.round(avgStartHour) % 24,
+    duration: Math.round(avgDuration)
+  }
 }
 
 // 分析单个成员在Chain中的活跃度
@@ -2922,26 +2979,114 @@ const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') =>
     }
   })
   
-  // 计算个人活跃时间段
-  const peakHours = []
-  if (fourMonthAttacks > 0) {
-    const maxActivity = Math.max(...timeZoneHours)
-    const threshold = Math.max(1, maxActivity * 0.3) // 降低阈值到30%
-    
-    for (let hour = 0; hour < 24; hour++) {
-      if (timeZoneHours[hour] >= threshold) {
-        peakHours.push(hour)
-      }
-    }
-  }
+  // 新的睡觉时间检测算法
+  const sleepPeriod = findSleepPeriod(timeZoneHours, fourMonthAttacks)
+  const activeRanges = calculateActiveRanges(sleepPeriod)
   
   return {
     fourMonthAttacks,
     oneMonthAttacks,
     hosPercentage: fourMonthAttacks > 0 ? (hosAttacks / fourMonthAttacks * 100) : 0,
     revengePercentage: fourMonthAttacks > 0 ? (revengeAttacks / fourMonthAttacks * 100) : 0,
-    peakHours
+    peakHours: activeRanges.activeHours, // 现在是活跃小时数组
+    sleepPeriod: sleepPeriod, // 新增：睡觉时间段
+    activeRanges: activeRanges.ranges, // 新增：活跃时间段范围
+    timeZoneDistribution: timeZoneHours
   }
+}
+
+// 寻找睡觉时间段（7-10小时的连续低活跃时间）
+const findSleepPeriod = (timeZoneHours, totalAttacks) => {
+  if (totalAttacks === 0) {
+    // 没有数据时，假设默认睡觉时间为凌晨2-10点
+    return { start: 2, duration: 8 }
+  }
+  
+  // 计算每小时的活跃度比例
+  const maxAttacks = Math.max(...timeZoneHours)
+  const activityRatios = timeZoneHours.map(count => maxAttacks > 0 ? count / maxAttacks : 0)
+  
+  let bestSleepPeriod = null
+  let lowestAvgActivity = 1.0
+  
+  // 尝试7-10小时的睡觉时间段
+  for (let duration = 7; duration <= 10; duration++) {
+    for (let startHour = 0; startHour < 24; startHour++) {
+      let totalActivity = 0
+      
+      // 计算这个时间段的平均活跃度
+      for (let i = 0; i < duration; i++) {
+        const hour = (startHour + i) % 24
+        totalActivity += activityRatios[hour]
+      }
+      
+      const avgActivity = totalActivity / duration
+      
+      // 寻找活跃度最低的时间段
+      if (avgActivity < lowestAvgActivity) {
+        lowestAvgActivity = avgActivity
+        bestSleepPeriod = { start: startHour, duration: duration }
+      }
+    }
+  }
+  
+  // 如果没找到合适的睡觉时间，使用默认值
+  if (!bestSleepPeriod) {
+    bestSleepPeriod = { start: 2, duration: 8 }
+  }
+  
+  return bestSleepPeriod
+}
+
+// 根据睡觉时间计算活跃时间段
+const calculateActiveRanges = (sleepPeriod) => {
+  const activeHours = []
+  const ranges = []
+  
+  // 生成活跃小时数组（除了睡觉时间的所有小时）
+  for (let hour = 0; hour < 24; hour++) {
+    const sleepStart = sleepPeriod.start
+    const sleepEnd = (sleepPeriod.start + sleepPeriod.duration) % 24
+    
+    let isSleeping = false
+    if (sleepStart < sleepEnd) {
+      // 睡觉时间不跨夜（如 2-10）
+      isSleeping = hour >= sleepStart && hour < sleepEnd
+    } else {
+      // 睡觉时间跨夜（如 22-6）
+      isSleeping = hour >= sleepStart || hour < sleepEnd
+    }
+    
+    if (!isSleeping) {
+      activeHours.push(hour)
+    }
+  }
+  
+  // 将活跃小时合并为连续的时间段
+  if (activeHours.length > 0) {
+    let rangeStart = activeHours[0]
+    let rangeEnd = activeHours[0]
+    
+    for (let i = 1; i < activeHours.length; i++) {
+      const currentHour = activeHours[i]
+      const prevHour = activeHours[i - 1]
+      
+      if (currentHour === prevHour + 1 || (prevHour === 23 && currentHour === 0)) {
+        // 连续的小时或跨夜连续
+        rangeEnd = currentHour
+      } else {
+        // 不连续，保存当前段，开始新段
+        ranges.push({ start: rangeStart, end: rangeEnd })
+        rangeStart = currentHour
+        rangeEnd = currentHour
+      }
+    }
+    
+    // 添加最后一段
+    ranges.push({ start: rangeStart, end: rangeEnd })
+  }
+  
+  return { activeHours, ranges }
 }
 
 // 获取帮派最优开战时间
@@ -3143,5 +3288,10 @@ const getBestTimesForFaction = (hourlyWinRates, factionNumber) => {
   max-height: 500px;
   overflow-y: auto;
   border: 1px solid #e4e7ed;
+}
+
+.sleep-period {
+  color: #f56c6c;
+  font-weight: 500;
 }
 </style> 
