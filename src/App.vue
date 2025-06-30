@@ -42,6 +42,10 @@
           <el-icon><DataAnalysis /></el-icon>
           <span>帮派实力对比</span>
         </el-menu-item>
+        <el-menu-item index="tempweapons">
+          <el-icon><Operation /></el-icon>
+          <span>临时武器统计</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -297,6 +301,11 @@
       <div v-if="activeMenu === 'comparison'" class="content-section">
         <FactionComparison />
       </div>
+
+      <!-- 临时武器统计 -->
+      <div v-if="activeMenu === 'tempweapons'" class="content-section">
+        <TempWeaponStats :api-key="globalApiKey" />
+      </div>
     </el-main>
   </div>
 </template>
@@ -306,6 +315,7 @@ import { ref, reactive, computed, watch } from 'vue'
 import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
 import FactionComparison from './components/FactionComparison.vue'
+import TempWeaponStats from './components/TempWeaponStats.vue'
 import { Box, Operation, Link, DataAnalysis } from '@element-plus/icons-vue'
 
 // 全局状态
