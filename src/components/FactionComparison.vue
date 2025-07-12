@@ -382,6 +382,7 @@
                       <ul>
                         <li>综合实力分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.combatPowerScore }}</strong></li>
                         <li>平均BS: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.averageBS }}</strong></li>
+                        <li>平均ELO分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.averageEloScore }}</strong></li>
                         <li>活跃度分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.activityScore }}</strong></li>
                         <li>成员数量: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.memberCount }}</strong> 人</li>
                         <li>综合评分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction1.score }}</strong></li>
@@ -394,6 +395,7 @@
                       <ul>
                         <li>综合实力分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.combatPowerScore }}</strong></li>
                         <li>平均BS: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.averageBS }}</strong></li>
+                        <li>平均ELO分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.averageEloScore }}</strong></li>
                         <li>活跃度分数: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.activityScore }}</strong></li>
                         <li>成员数量: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.memberCount }}</strong> 人</li>
                         <li>综合评分: <strong>{{ comparisonResult.winRatePrediction.analysisData.faction2.score }}</strong></li>
@@ -423,6 +425,11 @@
               faction2: formatBSValue(Math.round(comparisonResult.faction2Analysis.averageBS)),
               faction1Raw: Math.round(comparisonResult.faction1Analysis.averageBS),
               faction2Raw: Math.round(comparisonResult.faction2Analysis.averageBS)
+            },
+            {
+              metric: '平均ELO分数',
+              faction1: Math.round(comparisonResult.faction1Analysis.averageEloScore),
+              faction2: Math.round(comparisonResult.faction2Analysis.averageEloScore)
             },
             {
               metric: '综合实力分',
@@ -498,6 +505,13 @@
                     </el-tag>
                   </template>
                 </el-table-column>
+                <el-table-column prop="eloScore" label="ELO分数" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <el-tag :type="row.eloScore >= 2500 ? 'danger' : row.eloScore >= 2000 ? 'warning' : row.eloScore >= 1500 ? 'success' : 'info'" size="small">
+                      {{ row.eloScore }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column prop="fourMonthAttacks" label="四月开枪数" width="100" align="center" sortable />
                 <el-table-column prop="oneMonthAttacks" label="一月开枪数" width="100" align="center" sortable />
                 <el-table-column prop="hosPercentage" label="HOS占比" width="80" align="center" sortable>
@@ -554,6 +568,13 @@
                   <template #default="{ row }">
                     <el-tag :type="row.confidence === 'high' ? 'success' : row.confidence === 'medium' ? 'warning' : 'info'" size="small">
                       {{ formatBSValue(row.estimatedBS) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="eloScore" label="ELO分数" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <el-tag :type="row.eloScore >= 2500 ? 'danger' : row.eloScore >= 2000 ? 'warning' : row.eloScore >= 1500 ? 'success' : 'info'" size="small">
+                      {{ row.eloScore }}
                     </el-tag>
                   </template>
                 </el-table-column>
@@ -2152,6 +2173,7 @@ const calculateCombatPowerScore = (memberData) => {
   const {
     estimatedBS,
     bsScore,
+    eloScore,
     fourMonthAttacks,
     oneMonthAttacks,
     hosPercentage,
@@ -2160,11 +2182,12 @@ const calculateCombatPowerScore = (memberData) => {
     activityScore
   } = memberData
   
-  // 新的权重分配（不包含BS）
+  // 新的权重分配（包含ELO分数）
   const weights = {
-    activity: 0.75,     // 活跃度权重75%
+    activity: 0.40,     // 活跃度权重40%
     attackQuality: 0.15, // 攻击质量权重15%
     consistency: 0.10,  // 一致性权重10%
+    elo: 0.6,          // ELO权重35%
     timeRange: 0.0      // 时间覆盖权重0%
   }
   
@@ -2180,16 +2203,21 @@ const calculateCombatPowerScore = (memberData) => {
   const consistencyRatio = fourMonthAttacks > 0 ? oneMonthAttacks / (fourMonthAttacks / 4) : 0
   const consistencyComponent = Math.min(consistencyRatio * 100, 150) * weights.consistency
   
-  // 4. 时间覆盖分数
+  // 4. ELO分数组件
+  // ELO分数范围1000-3000，将其标准化为0-100分
+  const normalizedElo = Math.max(0, Math.min(100, (eloScore - 1000) / 20)) // 1000分=0分, 3000分=100分
+  const eloComponent = normalizedElo * weights.elo
+  
+  // 5. 时间覆盖分数
   const timeRangeComponent = (peakHours.length * 10) * weights.timeRange
   
   // 计算基础分数（不含BS）
-  const baseScore = activityComponent + qualityComponent + consistencyComponent + timeRangeComponent
+  const baseScore = activityComponent + qualityComponent + consistencyComponent + eloComponent + timeRangeComponent
   
   // 新公式：(基础分数 / 1000) * BS分
-  const finalScore = (baseScore / 1000) * bsScore
+  const finalScore = (baseScore / 1000) * bsScore *normalizedElo/100
   
-  console.log(`综合实力分计算 - 活跃度:${activityComponent.toFixed(1)}, 质量:${qualityComponent.toFixed(1)}, 一致性:${consistencyComponent.toFixed(1)}, 时间:${timeRangeComponent.toFixed(1)}, 基础分数:${baseScore.toFixed(1)}, BS分:${bsScore}, 最终分数:${finalScore.toFixed(1)}`)
+  console.log(`综合实力分计算 - 活跃度:${activityComponent.toFixed(1)}, 质量:${qualityComponent.toFixed(1)}, 一致性:${consistencyComponent.toFixed(1)}, ELO:${eloComponent.toFixed(1)}(${eloScore}), 时间:${timeRangeComponent.toFixed(1)}, 基础分数:${baseScore.toFixed(1)}, BS分:${bsScore}, 最终分数:${finalScore.toFixed(1)}`)
   
   return {
     totalScore: Math.round(finalScore),
@@ -2197,6 +2225,7 @@ const calculateCombatPowerScore = (memberData) => {
       activity: Math.round(activityComponent),
       quality: Math.round(qualityComponent),
       consistency: Math.round(consistencyComponent),
+      elo: Math.round(eloComponent),
       timeRange: Math.round(timeRangeComponent),
       baseScore: Math.round(baseScore),
       bsMultiplier: bsScore
@@ -2235,6 +2264,10 @@ const analyzeFactionStrength = (factionData) => {
   const totalActivityScore = memberAnalysis.reduce((sum, member) => sum + member.activityScore, 0)
   const averageActivityScore = memberAnalysis.length > 0 ? totalActivityScore / memberAnalysis.length : 0
   
+  // 计算总ELO分数和平均ELO分数
+  const totalEloScore = memberAnalysis.reduce((sum, member) => sum + member.eloScore, 0)
+  const averageEloScore = memberAnalysis.length > 0 ? totalEloScore / memberAnalysis.length : 0
+  
   return {
     name: factionData.name,
     memberCount: memberAnalysis.length,
@@ -2244,6 +2277,8 @@ const analyzeFactionStrength = (factionData) => {
     averageActivityScore,
     totalBS,
     averageBS,
+    totalEloScore,           // 新增
+    averageEloScore,         // 新增
     totalCombatPower,        // 新增
     averageCombatPower,      // 新增
     averageAttacksPerMonth: memberAnalysis.length > 0 
@@ -2403,6 +2438,7 @@ const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
     faction1: {
       name: faction1Analysis.name,
       averageBS: formatBSValue(Math.round(faction1Analysis.averageBS)),
+      averageEloScore: Math.round(faction1Analysis.averageEloScore),
       activityScore: Math.round(faction1Analysis.averageActivityScore),
       combatPowerScore: Math.round(faction1Analysis.averageCombatPower),
       memberCount: faction1Analysis.memberCount,
@@ -2411,6 +2447,7 @@ const predictPVPWinRate = (faction1Analysis, faction2Analysis) => {
     faction2: {
       name: faction2Analysis.name,
       averageBS: formatBSValue(Math.round(faction2Analysis.averageBS)),
+      averageEloScore: Math.round(faction2Analysis.averageEloScore),
       activityScore: Math.round(faction2Analysis.averageActivityScore),
       combatPowerScore: Math.round(faction2Analysis.averageCombatPower),
       memberCount: faction2Analysis.memberCount,
@@ -2884,6 +2921,9 @@ const analyzeMemberData = (members, personalStats, chains) => {
     // 计算活跃度分数（新算法）
     const activityScore = calculateActivityScore(memberChainActivity, bsPrediction.bsScore)
     
+    // 获取ELO分数（从个人统计数据中提取）
+    const eloScore = memberData.personalstats?.attacking?.elo || 1000 // 默认1000分
+    
     // 准备成员基础信息
     const memberInfo = {
       id: memberId,
@@ -2893,6 +2933,7 @@ const analyzeMemberData = (members, personalStats, chains) => {
       estimatedBS: bsPrediction.bs,
       bsScore: bsPrediction.bsScore,
       confidence: bsPrediction.confidence,
+      eloScore: eloScore, // 新增：ELO分数
       fourMonthAttacks: memberChainActivity.fourMonthAttacks,
       oneMonthAttacks: memberChainActivity.oneMonthAttacks,
       hosPercentage: memberChainActivity.hosPercentage,
