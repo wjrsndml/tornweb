@@ -452,6 +452,31 @@
               faction2: Math.round(comparisonResult.faction2Analysis.averageActivityScore)
             },
             {
+              metric: '平均HOS占比',
+              faction1: comparisonResult.faction1Analysis.averageHosPercentage.toFixed(1) + '%',
+              faction2: comparisonResult.faction2Analysis.averageHosPercentage.toFixed(1) + '%'
+            },
+            {
+              metric: '平均复仇占比',
+              faction1: comparisonResult.faction1Analysis.averageRevengePercentage.toFixed(1) + '%',
+              faction2: comparisonResult.faction2Analysis.averageRevengePercentage.toFixed(1) + '%'
+            },
+            {
+              metric: '平均助攻占比',
+              faction1: comparisonResult.faction1Analysis.averageAssistsPercentage.toFixed(1) + '%',
+              faction2: comparisonResult.faction2Analysis.averageAssistsPercentage.toFixed(1) + '%'
+            },
+            {
+              metric: '平均逃跑占比',
+              faction1: comparisonResult.faction1Analysis.averageEscapesPercentage.toFixed(1) + '%',
+              faction2: comparisonResult.faction2Analysis.averageEscapesPercentage.toFixed(1) + '%'
+            },
+            {
+              metric: '平均失败占比',
+              faction1: comparisonResult.faction1Analysis.averageLossesPercentage.toFixed(1) + '%',
+              faction2: comparisonResult.faction2Analysis.averageLossesPercentage.toFixed(1) + '%'
+            },
+            {
               metric: '成员数量',
               faction1: comparisonResult.faction1Analysis.memberCount,
               faction2: comparisonResult.faction2Analysis.memberCount
@@ -528,6 +553,27 @@
                     </span>
                   </template>
                 </el-table-column>
+                <el-table-column prop="assistsPercentage" label="助攻占比" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <span :style="{ color: row.assistsPercentage > 5 ? '#409eff' : '#909399' }">
+                      {{ row.assistsPercentage.toFixed(1) }}%
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="escapesPercentage" label="逃跑占比" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <span :style="{ color: row.escapesPercentage > 5 ? '#e6a23c' : '#909399' }">
+                      {{ row.escapesPercentage.toFixed(1) }}%
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="lossesPercentage" label="失败占比" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <span :style="{ color: row.lossesPercentage > 10 ? '#f56c6c' : '#909399' }">
+                      {{ row.lossesPercentage.toFixed(1) }}%
+                    </span>
+                  </template>
+                </el-table-column>
                 <el-table-column label="睡觉时间段" min-width="120">
                   <template #default="{ row }">
                     <span v-if="row.sleepPeriod" class="sleep-period">
@@ -591,6 +637,27 @@
                   <template #default="{ row }">
                     <span :style="{ color: row.revengePercentage > 10 ? '#f56c6c' : '#909399' }">
                       {{ row.revengePercentage.toFixed(1) }}%
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="assistsPercentage" label="助攻占比" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <span :style="{ color: row.assistsPercentage > 5 ? '#409eff' : '#909399' }">
+                      {{ row.assistsPercentage.toFixed(1) }}%
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="escapesPercentage" label="逃跑占比" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <span :style="{ color: row.escapesPercentage > 5 ? '#e6a23c' : '#909399' }">
+                      {{ row.escapesPercentage.toFixed(1) }}%
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="lossesPercentage" label="失败占比" width="80" align="center" sortable>
+                  <template #default="{ row }">
+                    <span :style="{ color: row.lossesPercentage > 10 ? '#f56c6c' : '#909399' }">
+                      {{ row.lossesPercentage.toFixed(1) }}%
                     </span>
                   </template>
                 </el-table-column>
@@ -2163,7 +2230,7 @@ const calculateActivityScore = (chainActivity, bsScore) => {
   
   const finalScore = fourMonthScore + oneMonthScore + timeRangeBonus
   
-  console.log(`活跃度分数计算: 四月攻击=${chainActivity.fourMonthAttacks}*${fourMonthWeight}=${fourMonthScore}, 一月攻击=${chainActivity.oneMonthAttacks}*${oneMonthWeight}=${oneMonthScore}, 时间多样性=${timeRangeBonus}, 最终分数=${finalScore}`)
+  console.log(`活跃度分数计算: 四月攻击=${chainActivity.fourMonthAttacks}(HOS:${chainActivity.hosAttacks},助攻:${chainActivity.assistsAttacks},逃跑:${chainActivity.escapesAttacks},失败:${chainActivity.lossesAttacks})*${fourMonthWeight}=${fourMonthScore}, 一月攻击=${chainActivity.oneMonthAttacks}*${oneMonthWeight}=${oneMonthScore}, 时间多样性=${timeRangeBonus}, 最终分数=${finalScore}`)
   
   return Math.max(0, finalScore)
 }
@@ -2268,6 +2335,23 @@ const analyzeFactionStrength = (factionData) => {
   const totalEloScore = memberAnalysis.reduce((sum, member) => sum + member.eloScore, 0)
   const averageEloScore = memberAnalysis.length > 0 ? totalEloScore / memberAnalysis.length : 0
   
+  // 计算各种攻击类型的平均占比
+  const averageHosPercentage = memberAnalysis.length > 0 
+    ? memberAnalysis.reduce((sum, m) => sum + m.hosPercentage, 0) / memberAnalysis.length 
+    : 0
+  const averageRevengePercentage = memberAnalysis.length > 0 
+    ? memberAnalysis.reduce((sum, m) => sum + m.revengePercentage, 0) / memberAnalysis.length 
+    : 0
+  const averageAssistsPercentage = memberAnalysis.length > 0 
+    ? memberAnalysis.reduce((sum, m) => sum + m.assistsPercentage, 0) / memberAnalysis.length 
+    : 0
+  const averageEscapesPercentage = memberAnalysis.length > 0 
+    ? memberAnalysis.reduce((sum, m) => sum + m.escapesPercentage, 0) / memberAnalysis.length 
+    : 0
+  const averageLossesPercentage = memberAnalysis.length > 0 
+    ? memberAnalysis.reduce((sum, m) => sum + m.lossesPercentage, 0) / memberAnalysis.length 
+    : 0
+  
   return {
     name: factionData.name,
     memberCount: memberAnalysis.length,
@@ -2281,6 +2365,11 @@ const analyzeFactionStrength = (factionData) => {
     averageEloScore,         // 新增
     totalCombatPower,        // 新增
     averageCombatPower,      // 新增
+    averageHosPercentage,    // 新增
+    averageRevengePercentage, // 新增
+    averageAssistsPercentage, // 新增
+    averageEscapesPercentage, // 新增
+    averageLossesPercentage,  // 新增
     averageAttacksPerMonth: memberAnalysis.length > 0 
       ? memberAnalysis.reduce((sum, m) => sum + m.oneMonthAttacks, 0) / memberAnalysis.length 
       : 0,
@@ -2938,6 +3027,14 @@ const analyzeMemberData = (members, personalStats, chains) => {
       oneMonthAttacks: memberChainActivity.oneMonthAttacks,
       hosPercentage: memberChainActivity.hosPercentage,
       revengePercentage: memberChainActivity.revengePercentage,
+      assistsPercentage: memberChainActivity.assistsPercentage,
+      escapesPercentage: memberChainActivity.escapesPercentage,
+      lossesPercentage: memberChainActivity.lossesPercentage,
+      hosAttacks: memberChainActivity.hosAttacks,
+      revengeAttacks: memberChainActivity.revengeAttacks,
+      assistsAttacks: memberChainActivity.assistsAttacks,
+      escapesAttacks: memberChainActivity.escapesAttacks,
+      lossesAttacks: memberChainActivity.lossesAttacks,
       peakHours: memberChainActivity.peakHours,
       sleepPeriod: memberChainActivity.sleepPeriod, // 睡觉时间段
       activeRanges: memberChainActivity.activeRanges, // 活跃时间段范围
@@ -2981,6 +3078,9 @@ const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') =>
   let oneMonthAttacks = 0
   let hosAttacks = 0
   let revengeAttacks = 0
+  let assistsAttacks = 0
+  let escapesAttacks = 0
+  let lossesAttacks = 0
   const timeZoneHours = new Array(24).fill(0)
   const oneMonthAgo = Math.floor(Date.now() / 1000) - (30 * 24 * 3600)
   
@@ -2991,10 +3091,14 @@ const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') =>
       if (memberAttacker && memberAttacker.attacks) {
         const attacks = memberAttacker.attacks
         
-        const totalAttacks = attacks.total || 0
+        // 计算总攻击数：包含所有类型的攻击
+        const totalAttacks = (attacks.total || 0) + (attacks.assists || 0) + (attacks.escapes || 0) + (attacks.losses || 0)
         fourMonthAttacks += totalAttacks
         hosAttacks += attacks.hospitalize || 0
         revengeAttacks += attacks.retaliations || 0
+        assistsAttacks += attacks.assists || 0
+        escapesAttacks += attacks.escapes || 0
+        lossesAttacks += attacks.losses || 0
         
         // 检查Chain是否在最近一个月内
         if (chainData.report.start >= oneMonthAgo) {
@@ -3029,6 +3133,14 @@ const analyzeMemberChainActivity = (memberId, chains, memberName = 'Unknown') =>
     oneMonthAttacks,
     hosPercentage: fourMonthAttacks > 0 ? (hosAttacks / fourMonthAttacks * 100) : 0,
     revengePercentage: fourMonthAttacks > 0 ? (revengeAttacks / fourMonthAttacks * 100) : 0,
+    assistsPercentage: fourMonthAttacks > 0 ? (assistsAttacks / fourMonthAttacks * 100) : 0,
+    escapesPercentage: fourMonthAttacks > 0 ? (escapesAttacks / fourMonthAttacks * 100) : 0,
+    lossesPercentage: fourMonthAttacks > 0 ? (lossesAttacks / fourMonthAttacks * 100) : 0,
+    hosAttacks,
+    revengeAttacks,
+    assistsAttacks,
+    escapesAttacks,
+    lossesAttacks,
     peakHours: activeRanges.activeHours, // 现在是活跃小时数组
     sleepPeriod: sleepPeriod, // 新增：睡觉时间段
     activeRanges: activeRanges.ranges, // 新增：活跃时间段范围
