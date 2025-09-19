@@ -688,8 +688,8 @@ const fetchAttackData = async () => {
       `https://api.torn.com/v2/user?key=${globalApiKey.value}`
     )
     
-    const userData = userResponse.data
-    const userFactionId = userData.faction?.faction_id
+    const userData = userResponse.data.profile
+    const userFactionId = userData.faction_id
     
     if (!userFactionId) {
       attacksError.value = '您当前没有加入帮派'
