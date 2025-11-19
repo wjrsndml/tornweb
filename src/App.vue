@@ -46,6 +46,10 @@
           <el-icon><Operation /></el-icon>
           <span>临时武器统计</span>
         </el-menu-item>
+        <el-menu-item index="grabber">
+          <el-icon><Download /></el-icon>
+          <span>攻击记录抓取</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -306,6 +310,11 @@
       <div v-if="activeMenu === 'tempweapons'" class="content-section">
         <TempWeaponStats :api-key="globalApiKey" />
       </div>
+
+      <!-- 攻击记录抓取 -->
+      <div v-if="activeMenu === 'grabber'" class="content-section">
+        <FactionAttacksGrabber :api-key="globalApiKey" />
+      </div>
     </el-main>
   </div>
 </template>
@@ -316,7 +325,8 @@ import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
 import FactionComparison from './components/FactionComparison.vue'
 import TempWeaponStats from './components/TempWeaponStats.vue'
-import { Box, Operation, Link, DataAnalysis } from '@element-plus/icons-vue'
+import FactionAttacksGrabber from './components/FactionAttacksGrabber.vue'
+import { Box, Operation, Link, DataAnalysis, Download } from '@element-plus/icons-vue'
 
 // 全局状态
 const globalApiKey = ref('')
