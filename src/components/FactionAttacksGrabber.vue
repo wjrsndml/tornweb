@@ -126,6 +126,24 @@ const formatTime = (timestamp) => {
   }
 }
 
+// 计算北京时间（UTC+8）的时间戳
+const getBeijingTimestamp = (timestamp) => {
+  // 传入的时间戳是 UTC 的秒数
+  // 如果需要转换为北京时间的时间戳（比如显示在 Excel 的 Timestamp 列），
+  // 通常我们直接保留原始 UTC 时间戳，因为 Excel 或其他工具会根据用户时区处理。
+  // 但如果用户希望看到的是北京时间对应的数值（即 +8 小时后的秒数），可以加上 8*3600。
+  // 不过标准做法是存储 UTC 时间戳，显示时格式化。
+  // 这里为了满足“存的时间也是11:00到15:00”的需求（看起来像是时区偏移被应用到了时间戳上或者请求参数上）
+  // 如果是请求参数问题：
+  // Element Plus 的 date-picker 返回的时间戳是基于浏览器本地时区的。
+  // 如果用户在 UTC+8 环境下选择了 19:00，得到的 timestamp 就是 19:00 UTC+8 对应的 UTC 时间戳（即 11:00 UTC）。
+  // API 期望的是 UTC 时间戳，所以 date-picker 的行为是正确的（传给 API 11:00 UTC）。
+  // 但是，如果用户选择了 TCT 模式，意味着他输入的 19:00 是 TCT (UTC+0) 的 19:00。
+  // 而 date-picker 如果运行在 UTC+8 环境，会认为用户输入的是 UTC+8 的 19:00。
+  
+  return timestamp
+}
+
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
 const formatDuration = (seconds) => {
@@ -149,10 +167,31 @@ const startFetching = async () => {
 
   // Element Plus date picker value-format="X" returns seconds as string/number
   // Ensure they are integers
-  const startTime = parseInt(form.dateRange[0])
-  const endTime = parseInt(form.dateRange[1])
+  let startTime = parseInt(form.dateRange[0])
+  let endTime = parseInt(form.dateRange[1])
 
-  console.log(`Start: ${startTime}, End: ${endTime}`)
+  // 通用时区处理逻辑：
+  // 1. 获取本地时区偏移（分钟），例如 UTC+8 返回 -480，UTC+0 返回 0
+  const offsetMinutes = new Date().getTimezoneOffset()
+  
+  // 2. 第一步：将 date-picker 返回的"本地时间戳"还原为"用户输入字面量对应的 UTC 时间戳"
+  // 也就是假设用户输入的是 TCT (UTC+0) 时间
+  // 公式：时间戳 - (UTC - Local) = 时间戳 + (Local - UTC)
+  // 例如：在 UTC+8 输入 19:00。
+  // date-picker 得到 UTC 11:00。
+  // offsetMinutes 是 -480 (-8小时)。
+  // 11:00 - (-8:00) = 19:00。正确。
+  startTime -= offsetMinutes * 60
+  endTime -= offsetMinutes * 60
+
+  // 3. 第二步：如果用户选择的是北京时间，则需要再减去 8 小时
+  // 因为北京时间 19:00 等于 TCT 11:00
+  if (form.timeMode === 'BJ') {
+    startTime -= 8 * 3600
+    endTime -= 8 * 3600
+  }
+
+  console.log(`Start: ${startTime}, End: ${endTime}, Mode: ${form.timeMode}, LocalOffset: ${offsetMinutes}`)
 
   // 策略：参考 fangfang.py，使用时间窗口滑动。
   // 但由于 API 支持 sort=DESC，我们从 endTime 开始往回抓取直到 startTime。
@@ -261,22 +300,42 @@ const fetchDetailedLogs = async () => {
   
   for (let i = 0; i < attacks.value.length; i++) {
     const attack = attacks.value[i]
+    let retryCount = 0
+    const maxRetries = 3
+    let success = false
     
-    try {
-      // 避免 API 速率限制，每分钟最多60次
-      await sleep(1100) 
-      
-      const url = `https://api.torn.com/v2/torn/attacklog?log=${attack.code}&offset=0&striptags=true&key=${props.apiKey}`
-      const response = await axios.get(url)
-      
-      if (response.data && response.data.attacklog) {
-        attack.details = response.data.attacklog
-      } else {
-        attack.details = { error: 'No data' }
+    while (!success && retryCount <= maxRetries) {
+      try {
+        // 避免 API 速率限制，每分钟最多60次
+        await sleep(1100) 
+        
+        const url = `https://api.torn.com/v2/torn/attacklog?log=${attack.code}&offset=0&striptags=true&key=${props.apiKey}`
+        const response = await axios.get(url)
+        
+        if (response.data && response.data.attacklog) {
+          attack.details = response.data.attacklog
+          success = true
+        } else {
+          // 某些情况下 API 可能返回成功但没有数据，视作成功或根据业务需求处理
+          // 这里假设没有 attacklog 字段也是一种数据返回
+          attack.details = { error: 'No data returned from API' }
+          success = true
+        }
+      } catch (e) {
+        const errorMessage = e.response?.data?.error?.error || e.message || 'Unknown error'
+        console.error(`Failed to fetch details for ${attack.code} (Attempt ${retryCount + 1}/${maxRetries + 1}):`, errorMessage)
+        
+        if (retryCount < maxRetries) {
+          const waitTime = 5000
+          progress.value = `请求失败: ${errorMessage}。正在等待 ${waitTime/1000} 秒后重试 (${retryCount + 1}/${maxRetries})...`
+          await sleep(waitTime)
+          retryCount++
+        } else {
+          attack.details = { error: `Failed after ${maxRetries} retries: ${errorMessage}` }
+          // 最终失败，让外层循环继续
+          break
+        }
       }
-    } catch (e) {
-      console.error(`Failed to fetch details for ${attack.code}`, e)
-      attack.details = { error: e.message }
     }
     
     detailedCurrent.value++
@@ -293,6 +352,12 @@ const fetchDetailedLogs = async () => {
 const exportXlsx = () => {
   if (attacks.value.length === 0) return
 
+  // 计算北京时间（UTC+8）的时间戳
+  const getBeijingTimestamp = (timestamp) => {
+    // 将 UTC 时间戳转换为北京时间对应的数值（即 +8 小时）
+    return timestamp + 8 * 3600
+  }
+
   // 准备数据
   const data = attacks.value.map(a => ({
     'Attack Link': {
@@ -302,8 +367,8 @@ const exportXlsx = () => {
     },
     'Attack ID': a.id,
     'Code': a.code,
-    'Started Timestamp': a.started,
-    'Ended Timestamp': a.ended,
+    'Started Timestamp': getBeijingTimestamp(a.started),
+    'Ended Timestamp': getBeijingTimestamp(a.ended),
     'Started': formatTime(a.started),
     'Ended': formatTime(a.ended),
     'Result': a.result,
