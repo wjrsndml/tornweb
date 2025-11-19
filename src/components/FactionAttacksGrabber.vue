@@ -295,6 +295,11 @@ const exportXlsx = () => {
 
   // 准备数据
   const data = attacks.value.map(a => ({
+    'Attack Link': {
+      t: 's', 
+      v: 'Link', 
+      l: { Target: `https://www.torn.com/loader.php?sid=attackLog&ID=${a.code}` }
+    },
     'Attack ID': a.id,
     'Code': a.code,
     'Started Timestamp': a.started,
@@ -321,6 +326,7 @@ const exportXlsx = () => {
   
   // 设置列宽
   const wscols = [
+    {wch: 10}, // Attack Link
     {wch: 12}, // Attack ID
     {wch: 35}, // Code
     {wch: 15}, // Started Timestamp
