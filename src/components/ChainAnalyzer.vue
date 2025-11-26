@@ -1,3 +1,9 @@
+<!--
+  功能：Torn Ranked War Chain 查看器
+  描述：输入Ranked War ID，获取参战帮派的Chain数据报告。
+  修改记录：
+    - 2024-11-26: 修改Chain获取逻辑，将开始时间前推5秒，以包含开战前5秒内开始的Chain。
+-->
 <template>
   <el-card class="chain-analyzer-card">
     <template #header>
@@ -398,7 +404,7 @@ const processFactionChains = async (factionInfo, warStartTime, warEndTime) => {
   }
   
   try {
-    const chainsSummaryEndpoint = `/faction/${factionInfo.id}/chains?from=${warStartTime}&to=${warEndTime}&limit=100`
+    const chainsSummaryEndpoint = `/faction/${factionInfo.id}/chains?from=${warStartTime - 5}&to=${warEndTime}&limit=100`
     const chainsSummaryData = await fetchApi(chainsSummaryEndpoint, props.apiKey)
     const chainSummaries = chainsSummaryData.chains || []
     
