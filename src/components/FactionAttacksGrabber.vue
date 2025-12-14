@@ -5,7 +5,7 @@
         <h2>帮派攻击记录抓取</h2>
       </div>
     </template>
-    <p>抓取指定时间段内的帮派攻击记录，导出xlsx查看（保存的攻击记录时间为北京时间）。</p>
+    <p>抓取指定时间段内的帮派攻击记录，导出xlsx查看。</p>
 
     <el-form :model="form" label-width="120px">
       <el-form-item label="时间范围">
@@ -18,12 +18,6 @@
           value-format="X"
           :default-time="defaultTime"
         />
-      </el-form-item>
-      <el-form-item label="时间模式">
-        <el-radio-group v-model="form.timeMode">
-          <el-radio label="TCT">TCT (UTC+0)</el-radio>
-          <el-radio label="BJ">北京时间 (UTC+8)</el-radio>
-        </el-radio-group>
       </el-form-item>
       <el-form-item label="详细模式">
         <el-checkbox v-model="form.fetchDetails">抓取详细攻击记录 (速度较慢)</el-checkbox>
@@ -60,6 +54,7 @@
             {{ formatTime(scope.row.started) }}
           </template>
         </el-table-column>
+        <el-table-column prop="direction" label="方向" width="90" />
         <el-table-column prop="attacker.name" label="攻击者" width="150" />
         <el-table-column prop="defender.name" label="防守者" width="150" />
         <el-table-column prop="result" label="结果" width="100" />
@@ -80,6 +75,16 @@
 </template>
 
 <script setup>
+// FactionAttacksGrabber.vue
+// 作用：按用户选择的时间范围抓取 Torn 帮派攻击记录并导出 Excel。
+// 时间处理约定：
+// - Torn API/记录中的 started/ended 时间戳：统一视为 UTC 的 epoch 秒（不做任何时区数值偏移）。
+// - 界面/Excel 展示时间统一按 TCT (UTC+0) 格式化。
+// - date-picker 输出的是“本地时区下选中时刻”的 epoch 秒；本页面约定用户输入的是 TCT 字面量时间，因此需要把本地 epoch 映射为“同字面量在 UTC 下”的 epoch。
+// 抓取策略（attacks）：
+// - 使用 `/v2/faction/attacks?limit=100&sort=DESC&to=<currentTo>&key=<key>` 倒序抓取。
+// - 若返回条数 == 100，则以本批 started 的“中位数”作为新的 to 继续请求；直到返回条数 < 100，认为已抓全（在当前时间窗内）。
+// - 为减少重复/便于区分，分别使用 `filters=incoming` 与 `filters=outgoing` 抓取帮派“收到/发出”的攻击记录，并合并去重。
 import { ref, reactive, computed } from 'vue'
 import axios from 'axios'
 import * as XLSX from 'xlsx'
@@ -93,7 +98,6 @@ const props = defineProps({
 
 const form = reactive({
   dateRange: [], // [startTimestamp, endTimestamp] in seconds (string or number)
-  timeMode: 'TCT',
   fetchDetails: false
 })
 
@@ -117,31 +121,22 @@ const canFetch = computed(() => {
   return props.apiKey && form.dateRange && form.dateRange.length === 2
 })
 
-const formatTime = (timestamp) => {
+const formatTimeInZone = (timestamp, timeZone, locale) => {
   const date = new Date(timestamp * 1000)
-  if (form.timeMode === 'TCT') {
-    return date.toLocaleString('en-GB', { timeZone: 'UTC' })
-  } else {
-    return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
-  }
+  return date.toLocaleString(locale, { timeZone })
 }
 
-// 计算北京时间（UTC+8）的时间戳
-const getBeijingTimestamp = (timestamp) => {
-  // 传入的时间戳是 UTC 的秒数
-  // 如果需要转换为北京时间的时间戳（比如显示在 Excel 的 Timestamp 列），
-  // 通常我们直接保留原始 UTC 时间戳，因为 Excel 或其他工具会根据用户时区处理。
-  // 但如果用户希望看到的是北京时间对应的数值（即 +8 小时后的秒数），可以加上 8*3600。
-  // 不过标准做法是存储 UTC 时间戳，显示时格式化。
-  // 这里为了满足“存的时间也是11:00到15:00”的需求（看起来像是时区偏移被应用到了时间戳上或者请求参数上）
-  // 如果是请求参数问题：
-  // Element Plus 的 date-picker 返回的时间戳是基于浏览器本地时区的。
-  // 如果用户在 UTC+8 环境下选择了 19:00，得到的 timestamp 就是 19:00 UTC+8 对应的 UTC 时间戳（即 11:00 UTC）。
-  // API 期望的是 UTC 时间戳，所以 date-picker 的行为是正确的（传给 API 11:00 UTC）。
-  // 但是，如果用户选择了 TCT 模式，意味着他输入的 19:00 是 TCT (UTC+0) 的 19:00。
-  // 而 date-picker 如果运行在 UTC+8 环境，会认为用户输入的是 UTC+8 的 19:00。
-  
-  return timestamp
+const formatTime = (timestamp) => {
+  return formatTimeInZone(timestamp, 'UTC', 'en-GB')
+}
+
+// 把 date-picker 产出的 epoch（按本地时区解释的“选中时刻”）转换为：
+// “同样字面量时间”在 UTC (TCT) 对应的 epoch 秒
+// 公式：utcEpoch = localEpoch - (localOffsetMinutes - 0) * 60
+// 其中 offsetMinutes = Date.getTimezoneOffset() = UTC - LocalTZ（单位分钟）
+const convertPickerEpochToUtcEpoch = (pickerEpochSeconds) => {
+  const localOffsetMinutes = new Date().getTimezoneOffset()
+  return pickerEpochSeconds - localOffsetMinutes * 60
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
@@ -167,114 +162,99 @@ const startFetching = async () => {
 
   // Element Plus date picker value-format="X" returns seconds as string/number
   // Ensure they are integers
-  let startTime = parseInt(form.dateRange[0])
-  let endTime = parseInt(form.dateRange[1])
+  const pickerStart = parseInt(form.dateRange[0])
+  const pickerEnd = parseInt(form.dateRange[1])
 
-  // 通用时区处理逻辑：
-  // 1. 获取本地时区偏移（分钟），例如 UTC+8 返回 -480，UTC+0 返回 0
-  const offsetMinutes = new Date().getTimezoneOffset()
-  
-  // 2. 第一步：将 date-picker 返回的"本地时间戳"还原为"用户输入字面量对应的 UTC 时间戳"
-  // 也就是假设用户输入的是 TCT (UTC+0) 时间
-  // 公式：时间戳 - (UTC - Local) = 时间戳 + (Local - UTC)
-  // 例如：在 UTC+8 输入 19:00。
-  // date-picker 得到 UTC 11:00。
-  // offsetMinutes 是 -480 (-8小时)。
-  // 11:00 - (-8:00) = 19:00。正确。
-  startTime -= offsetMinutes * 60
-  endTime -= offsetMinutes * 60
+  // 将 date-picker 的“本地字面量时间”映射到 TCT (UTC) 的 epoch
+  let startTime = convertPickerEpochToUtcEpoch(pickerStart)
+  let endTime = convertPickerEpochToUtcEpoch(pickerEnd)
 
-  // 3. 第二步：如果用户选择的是北京时间，则需要再减去 8 小时
-  // 因为北京时间 19:00 等于 TCT 11:00
-  if (form.timeMode === 'BJ') {
-    startTime -= 8 * 3600
-    endTime -= 8 * 3600
-  }
-
-  console.log(`Start: ${startTime}, End: ${endTime}, Mode: ${form.timeMode}, LocalOffset: ${offsetMinutes}`)
-
-  // 策略：参考 fangfang.py，使用时间窗口滑动。
-  // 但由于 API 支持 sort=DESC，我们从 endTime 开始往回抓取直到 startTime。
-  // 这样可以确保获取到最新的数据。
-  
-  let currentTo = endTime
-  let hasMore = true
-  let totalFetched = 0
-  let consecutiveEmptyBatches = 0
+  // 便于排查：同时打印输入与换算后的 epoch
+  console.log(
+    `PickerStart: ${pickerStart}, PickerEnd: ${pickerEnd}, Start: ${startTime}, End: ${endTime}, LocalOffsetMinutes: ${new Date().getTimezoneOffset()}`
+  )
 
   try {
-    while (hasMore) {
-      // 避免 API 速率限制，每分钟最多60次，即每次间隔至少1秒
-      await sleep(1000) 
-
-      progress.value = `正在抓取 ${formatTime(currentTo)} 之前的记录... (已获取 ${totalFetched} 条)`
-
-      // 构造请求
-      // 注意：V2 API 的 to 参数通常表示 "直到这个时间点"。
-      // 如果我们用 sort=DESC，返回的是 <= to 的记录。
-      const url = `https://api.torn.com/v2/faction/attacks?limit=100&sort=DESC&to=${currentTo}&key=${props.apiKey}`
-      
-      const response = await axios.get(url)
-      
-      if (!response.data || !response.data.attacks) {
-        throw new Error('API 返回格式错误')
+    // 合并 incoming/outgoing 并按 id 去重
+    const attacksById = new Map()
+    const markDirection = (existing, dir) => {
+      if (!existing.direction) {
+        existing.direction = dir
+        return
       }
+      if (existing.direction === dir) return
+      const parts = new Set(existing.direction.split(',').map(s => s.trim()).filter(Boolean))
+      parts.add(dir)
+      existing.direction = Array.from(parts).sort().join(',')
+    }
 
-      const batch = response.data.attacks
-      
-      if (batch.length === 0) {
-        hasMore = false
-        break
-      }
+    const fetchWithFilter = async (filter) => {
+      let currentTo = endTime
+      let guard = 0
 
-      let newItemsInBatch = 0
-      let minTimestampInBatch = currentTo
-
-      for (const attack of batch) {
-        // 过滤掉时间范围之外的 (早于 startTime)
-        if (attack.started < startTime) {
-          hasMore = false // 已经超出了开始时间，不需要再往后翻了
-          continue 
+      while (true) {
+        guard++
+        if (guard > 5000) {
+          throw new Error(`抓取保护阀触发：${filter} 迭代次数过多，可能陷入死循环`)
         }
 
-        // 记录本批次最小时间戳，用于下一次翻页
-        if (attack.started < minTimestampInBatch) {
-          minTimestampInBatch = attack.started
+        // 避免 API 速率限制，每分钟最多60次，即每次间隔至少1秒
+        await sleep(1000)
+
+        progress.value = `正在抓取(${filter}) ${formatTime(currentTo)} 之前的记录... (当前合并总数 ${attacksById.size} 条)`
+
+        // attacks 一次最多 100 条，按 DESC 返回 <= to 的数据
+        const url = `https://api.torn.com/v2/faction/attacks?filters=${filter}&limit=100&sort=DESC&to=${currentTo}&key=${props.apiKey}`
+        const response = await axios.get(url)
+
+        if (!response.data || !response.data.attacks) {
+          throw new Error('API 返回格式错误')
         }
 
-        // 去重
-        if (!visitedIds.has(attack.id)) {
-          visitedIds.add(attack.id)
-          attacks.value.push(attack)
-          newItemsInBatch++
+        const batch = response.data.attacks
+        if (batch.length === 0) break
+
+        for (const attack of batch) {
+          // 过滤时间窗
+          if (attack.started < startTime) continue
+          if (attack.started > endTime) continue
+
+          const existing = attacksById.get(attack.id)
+          if (existing) {
+            markDirection(existing, filter)
+            continue
+          }
+
+          attack.direction = filter
+          attacksById.set(attack.id, attack)
         }
-      }
 
-      totalFetched = attacks.value.length
+        // 结束条件：返回条数不足 100，视为已抓全
+        if (batch.length < 100) break
 
-      // 更新 currentTo
-      // 如果本批次所有数据的 timestamp 都 >= currentTo (且我们已经处理过它们)，
-      // 且没有更早的数据，我们需要强制把 currentTo 往前推一点，防止死循环。
-      // 但通常 sort=DESC 会返回更早的数据。
-      // 如果 minTimestampInBatch == currentTo 且 batch 满了，说明这一秒有很多数据。
-      // 我们下一次请求 to=minTimestampInBatch，API 会返回 <= 这个时间的数据。
-      // 由于我们有 visitedIds 去重，所以重复获取没关系。
-      
-      // 如果本批次没有新增数据（全是重复的），且我们还没超出时间范围
-      if (newItemsInBatch === 0) {
-        consecutiveEmptyBatches++
-        // 强制往前推1秒，避免死循环
-        currentTo = minTimestampInBatch - 1
-      } else {
-        consecutiveEmptyBatches = 0
-        currentTo = minTimestampInBatch
-      }
+        // 以 started 的中位数作为新的 to（batch 已按 started DESC 接近 to 排序）
+        const medianIndex = Math.floor(batch.length / 2)
+        let newTo = batch[medianIndex]?.started
+        if (!newTo || Number.isNaN(newTo)) {
+          newTo = batch[batch.length - 1]?.started ? batch[batch.length - 1].started - 1 : currentTo - 1
+        }
 
-      // 安全阀：如果连续多次没有新数据，或者 currentTo 已经小于 startTime
-      if (consecutiveEmptyBatches > 5 || currentTo < startTime) {
-        hasMore = false
+        // 防止不下降导致死循环
+        if (newTo >= currentTo) {
+          newTo = currentTo - 1
+        }
+        currentTo = newTo
+
+        if (currentTo < startTime) break
       }
     }
+
+    // 分别抓取 incoming / outgoing 再合并
+    await fetchWithFilter('incoming')
+    await fetchWithFilter('outgoing')
+
+    // 写回数组（按 started DESC 排序）
+    attacks.value = Array.from(attacksById.values()).sort((a, b) => (b.started || 0) - (a.started || 0))
 
     progress.value = `抓取完成！共找到 ${attacks.value.length} 条记录。`
 
@@ -352,12 +332,6 @@ const fetchDetailedLogs = async () => {
 const exportXlsx = () => {
   if (attacks.value.length === 0) return
 
-  // 计算北京时间（UTC+8）的时间戳
-  const getBeijingTimestamp = (timestamp) => {
-    // 将 UTC 时间戳转换为北京时间对应的数值（即 +8 小时）
-    return timestamp + 8 * 3600
-  }
-
   // 准备数据
   const data = attacks.value.map(a => ({
     'Attack Link': {
@@ -367,8 +341,11 @@ const exportXlsx = () => {
     },
     'Attack ID': a.id,
     'Code': a.code,
-    'Started Timestamp': getBeijingTimestamp(a.started),
-    'Ended Timestamp': getBeijingTimestamp(a.ended),
+    'Direction': a.direction || '',
+    // 真实时间戳：UTC epoch 秒（不要做 +8 的数值偏移）
+    'Started Timestamp': a.started,
+    'Ended Timestamp': a.ended,
+    // 保持向后兼容：保留旧列名 Started/Ended
     'Started': formatTime(a.started),
     'Ended': formatTime(a.ended),
     'Result': a.result,
@@ -394,6 +371,7 @@ const exportXlsx = () => {
     {wch: 10}, // Attack Link
     {wch: 12}, // Attack ID
     {wch: 35}, // Code
+    {wch: 12}, // Direction
     {wch: 15}, // Started Timestamp
     {wch: 15}, // Ended Timestamp
     {wch: 20}, // Started
