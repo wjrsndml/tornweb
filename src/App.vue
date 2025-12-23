@@ -50,6 +50,10 @@
           <el-icon><Download /></el-icon>
           <span>攻击记录抓取</span>
         </el-menu-item>
+        <el-menu-item index="forum">
+          <el-icon><Document /></el-icon>
+          <span>论坛帖子抓取</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -315,6 +319,11 @@
       <div v-if="activeMenu === 'grabber'" class="content-section">
         <FactionAttacksGrabber :api-key="globalApiKey" />
       </div>
+
+      <!-- 论坛帖子抓取 -->
+      <div v-if="activeMenu === 'forum'" class="content-section">
+        <ForumThreadGrabber :api-key="globalApiKey" />
+      </div>
     </el-main>
   </div>
 </template>
@@ -326,7 +335,8 @@ import ChainAnalyzer from './components/ChainAnalyzer.vue'
 import FactionComparison from './components/FactionComparison.vue'
 import TempWeaponStats from './components/TempWeaponStats.vue'
 import FactionAttacksGrabber from './components/FactionAttacksGrabber.vue'
-import { Box, Operation, Link, DataAnalysis, Download } from '@element-plus/icons-vue'
+import ForumThreadGrabber from './components/ForumThreadGrabber.vue'
+import { Box, Operation, Link, DataAnalysis, Download, Document } from '@element-plus/icons-vue'
 
 // 全局状态
 const globalApiKey = ref('')
