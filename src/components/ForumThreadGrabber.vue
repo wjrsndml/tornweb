@@ -119,7 +119,33 @@
         回帖（{{ lastFetch.offsetStart }}~{{ lastFetch.offsetEnd }}，共 {{ posts.length }} 条）
       </el-divider>
 
-      <el-table :data="posts" stripe size="small" style="width: 100%">
+      <div class="posts-toolbar">
+        <div class="action-bar" style="margin-top: 0">
+          <el-button type="success" @click="exportJson" :disabled="!thread">
+            导出 JSON（含回帖）
+          </el-button>
+          <el-button @click="copyRawJsonToClipboard" :disabled="!thread">
+            复制原始 JSON（含回帖）
+          </el-button>
+          <el-button type="warning" @click="copyAiSummaryPackToClipboard" :disabled="!thread">
+            一键复制给 AI 总结（中文，含回帖）
+          </el-button>
+          <el-button @click="postsListCollapsed = !postsListCollapsed">
+            {{ postsListCollapsed ? '展开回帖列表' : '折叠回帖列表' }}
+          </el-button>
+        </div>
+      </div>
+
+      <el-alert
+        v-if="postsListCollapsed"
+        type="info"
+        show-icon
+        :closable="false"
+        style="margin-top: 10px"
+        title="回帖列表已折叠（避免内容过长影响滚动）。你仍可直接导出/复制；如需查看回帖，请点击“展开回帖列表”。"
+      />
+
+      <el-table v-if="!postsListCollapsed" :data="posts" stripe size="small" style="width: 100%">
         <el-table-column label="时间(TCT)" width="170">
           <template #default="scope">
             {{ formatTime(scope.row.created_time) }}
@@ -141,18 +167,6 @@
           </template>
         </el-table-column>
       </el-table>
-
-      <div class="action-bar">
-        <el-button type="success" @click="exportJson" :disabled="!thread">
-          导出 JSON（含回帖）
-        </el-button>
-        <el-button @click="copyRawJsonToClipboard" :disabled="!thread">
-          复制原始 JSON（含回帖）
-        </el-button>
-        <el-button type="warning" @click="copyAiSummaryPackToClipboard" :disabled="!thread">
-          一键复制给 AI 总结（中文，含回帖）
-        </el-button>
-      </div>
     </div>
   </el-card>
 </template>
@@ -167,6 +181,7 @@
 import { computed, reactive, ref } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { createRateLimiter } from '../utils/requestRateLimiter'
 
 const props = defineProps({
   apiKey: {
@@ -174,6 +189,9 @@ const props = defineProps({
     required: true
   }
 })
+
+// Torn API 限速：至少 1s/次请求（避免 429 / too many requests）
+const ensureRateLimit = createRateLimiter(1000)
 
 const form = reactive({
   threadId: '',
@@ -188,6 +206,10 @@ const error = ref(null)
 
 const thread = ref(null)
 const posts = ref([])
+
+// 当回帖数量很大时（例如上千条），默认折叠“整块回帖列表”，避免滚动太久才能导出/复制
+const AUTO_COLLAPSE_LIST_THRESHOLD = 120
+const postsListCollapsed = ref(false)
 
 const postsProgress = reactive({
   active: false,
@@ -282,6 +304,7 @@ const clearAll = () => {
   error.value = null
   thread.value = null
   posts.value = []
+  postsListCollapsed.value = false
 
   postsProgress.active = false
   postsProgress.start = 0
@@ -312,6 +335,7 @@ const fetchThread = async () => {
     }
 
     const url = `https://api.torn.com/v2/forum/${threadId}/thread`
+    await ensureRateLimit()
     const res = await axios.get(url, { headers: authHeaders.value })
     thread.value = res?.data?.thread || null
     if (!thread.value) {
@@ -378,6 +402,7 @@ const fetchPosts = async () => {
     // 按 20 条分页：offset=0/20/40...
     for (let offset = start; offset <= end; offset += pageSize) {
       postsProgress.currentOffset = offset
+      await ensureRateLimit()
       const res = await axios.get(url, {
         headers: authHeaders.value,
         params: {
@@ -412,6 +437,7 @@ const fetchPosts = async () => {
     }
 
     posts.value = collected
+    postsListCollapsed.value = posts.value.length >= AUTO_COLLAPSE_LIST_THRESHOLD
     lastFetch.offsetStart = start
     lastFetch.offsetEnd = end
     lastFetch.stripTags = Boolean(form.stripTags)
