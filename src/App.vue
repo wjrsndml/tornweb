@@ -51,6 +51,10 @@
           <el-icon><Operation /></el-icon>
           <span>临时武器统计</span>
         </el-menu-item>
+        <el-menu-item index="oc">
+          <el-icon><Operation /></el-icon>
+          <span>帮派 OC 推荐</span>
+        </el-menu-item>
         <el-menu-item index="grabber">
           <el-icon><Download /></el-icon>
           <span>攻击记录抓取</span>
@@ -324,6 +328,11 @@
         <TempWeaponStats :api-key="globalApiKey" />
       </div>
 
+      <!-- 帮派 OC 状态 -->
+      <div v-if="activeMenu === 'oc'" class="content-section">
+        <FactionOcStatus :api-key="globalApiKey" />
+      </div>
+
       <!-- 攻击记录抓取 -->
       <div v-if="activeMenu === 'grabber'" class="content-section">
         <FactionAttacksGrabber :api-key="globalApiKey" />
@@ -344,14 +353,17 @@
 
 <script setup>
 // App.vue
-// 作用：应用主入口与侧边栏导航；提供全局 API Key 输入，并将 API Key 传递给各功能组件。
+// 作用：应用主入口与侧边栏导航；提供全局 API Key 输入，并将 API Key 传递给各功能组件；并在刷新/重开后恢复上一次使用的功能页。
 // 修改记录：
 // - 2025-12-27: 增加“记住 API Key（localStorage）”与一键清除功能。
+// - 2025-12-27: 增加“帮派 OC 推荐”功能入口。
+// - 2025-12-27: 增加“页面记忆”功能：刷新/重开后自动恢复上一次选择的菜单。
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
 import FactionComparison from './components/FactionComparison.vue'
 import TempWeaponStats from './components/TempWeaponStats.vue'
+import FactionOcStatus from './components/FactionOcStatus.vue'
 import FactionAttacksGrabber from './components/FactionAttacksGrabber.vue'
 import ForumThreadGrabber from './components/ForumThreadGrabber.vue'
 import UserForumPostsGrabber from './components/UserForumPostsGrabber.vue'
@@ -363,11 +375,30 @@ import {
   setRememberApiKeyEnabled,
   setStoredApiKey
 } from './utils/apiKeyStorage'
+import { getStoredActiveMenu, setStoredActiveMenu } from './utils/pageStateStorage'
 
 // 全局状态
 const globalApiKey = ref('')
 const rememberApiKey = ref(true)
-const activeMenu = ref('split')
+const ALLOWED_MENUS = new Set([
+  'split',
+  'attacks',
+  'chains',
+  'comparison',
+  'tempweapons',
+  'oc',
+  'grabber',
+  'forum',
+  'userforum'
+])
+
+const normalizeActiveMenu = (menu) => {
+  const v = String(menu || '').trim()
+  return ALLOWED_MENUS.has(v) ? v : 'split'
+}
+
+// 页面记忆：初始化时就从 localStorage 恢复，避免先闪到默认页再切回
+const activeMenu = ref(normalizeActiveMenu(getStoredActiveMenu('split')))
 
 onMounted(() => {
   rememberApiKey.value = getRememberApiKeyEnabled(true)
@@ -375,6 +406,11 @@ onMounted(() => {
     const saved = getStoredApiKey()
     if (saved) globalApiKey.value = saved
   }
+})
+
+// 页面记忆：切换菜单时持久化
+watch(activeMenu, (v) => {
+  setStoredActiveMenu(normalizeActiveMenu(v))
 })
 
 watch(globalApiKey, (v) => {
@@ -432,7 +468,7 @@ const attacksResult = ref(null)
 
 // 菜单选择处理
 const handleMenuSelect = (index) => {
-  activeMenu.value = index
+  activeMenu.value = normalizeActiveMenu(index)
   // 清除之前的错误信息
   error.value = null
   attacksError.value = null
