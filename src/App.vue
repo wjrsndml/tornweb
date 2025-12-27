@@ -17,6 +17,11 @@
               size="small"
             />
           </el-form-item>
+          <div class="api-key-actions">
+            <el-switch v-model="rememberApiKey" />
+            <span class="api-key-hint">记住 API Key（仅保存在本地浏览器）</span>
+            <el-button size="small" @click="clearRememberedApiKey">清除已记住</el-button>
+          </div>
         </el-form>
       </div>
 
@@ -338,7 +343,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+// App.vue
+// 作用：应用主入口与侧边栏导航；提供全局 API Key 输入，并将 API Key 传递给各功能组件。
+// 修改记录：
+// - 2025-12-27: 增加“记住 API Key（localStorage）”与一键清除功能。
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
 import FactionComparison from './components/FactionComparison.vue'
@@ -347,10 +356,46 @@ import FactionAttacksGrabber from './components/FactionAttacksGrabber.vue'
 import ForumThreadGrabber from './components/ForumThreadGrabber.vue'
 import UserForumPostsGrabber from './components/UserForumPostsGrabber.vue'
 import { Box, Operation, Link, DataAnalysis, Download, Document, User } from '@element-plus/icons-vue'
+import {
+  clearStoredApiKey,
+  getRememberApiKeyEnabled,
+  getStoredApiKey,
+  setRememberApiKeyEnabled,
+  setStoredApiKey
+} from './utils/apiKeyStorage'
 
 // 全局状态
 const globalApiKey = ref('')
+const rememberApiKey = ref(true)
 const activeMenu = ref('split')
+
+onMounted(() => {
+  rememberApiKey.value = getRememberApiKeyEnabled(true)
+  if (rememberApiKey.value) {
+    const saved = getStoredApiKey()
+    if (saved) globalApiKey.value = saved
+  }
+})
+
+watch(globalApiKey, (v) => {
+  if (!rememberApiKey.value) return
+  setStoredApiKey(v)
+})
+
+watch(rememberApiKey, (v) => {
+  setRememberApiKeyEnabled(Boolean(v))
+  if (!v) {
+    clearStoredApiKey()
+    globalApiKey.value = ''
+  } else {
+    setStoredApiKey(globalApiKey.value)
+  }
+})
+
+const clearRememberedApiKey = () => {
+  clearStoredApiKey()
+  globalApiKey.value = ''
+}
 
 // 原有的状态变量
 const form = reactive({
@@ -1016,6 +1061,19 @@ const calculateAverageRespect = (attacks, memberId, opponentFactionId) => {
   background-color: #f9f9fb;
   border-radius: 8px;
   border: 1px solid #e9e9eb;
+}
+
+.api-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.api-key-hint {
+  color: #909399;
+  font-size: 12px;
 }
 
 .sidebar-menu {

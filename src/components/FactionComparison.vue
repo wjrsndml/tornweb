@@ -10,7 +10,10 @@
     <!-- API Key 配置 -->
     <el-card class="api-config-card" style="margin-bottom: 20px;">
       <template #header>
-        <h4>API 密钥配置</h4>
+        <div class="api-config-header">
+          <h4>API 密钥配置</h4>
+          <el-button size="small" @click="clearRememberedApiKeys">清除已记住</el-button>
+        </div>
       </template>
       <el-form :model="apiForm" label-width="100px">
         <el-form-item label="API 密钥">
@@ -27,6 +30,7 @@
               • 支持多密钥并行请求加速<br>
               • 单个密钥限制50次/分钟
             </el-text>
+            <div class="api-help-subhint">提示：密钥会自动保存在本地浏览器（localStorage）。</div>
           </div>
         </el-form-item>
       </el-form>
@@ -715,9 +719,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+// FactionComparison.vue
+// 作用：帮派实力对比分析（支持多 API Key 并行请求、缓存、进度展示等）。
+// 修改记录：
+// - 2025-12-27: 增加多 API Key 输入的本地记忆（localStorage）与一键清除。
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { clearStoredApiKeysPool, getStoredApiKeysPool, setStoredApiKeysPool } from '../utils/apiKeyStorage'
 
 const API_BASE_URL = 'https://api.torn.com/v2'
 const RATE_LIMIT_PER_MINUTE = 50
@@ -781,6 +790,24 @@ const getValidApiKeys = () => {
     .split('\n')
     .map(key => key.trim())
     .filter(key => key.length > 0)
+}
+
+onMounted(() => {
+  const saved = getStoredApiKeysPool()
+  if (saved && saved.trim()) apiForm.apiKeys = saved
+})
+
+watch(
+  () => apiForm.apiKeys,
+  (v) => {
+    setStoredApiKeysPool(v)
+  }
+)
+
+const clearRememberedApiKeys = () => {
+  clearStoredApiKeysPool()
+  apiForm.apiKeys = ''
+  ElMessage.success('已清除本地保存的 API 密钥')
 }
 
 // API请求队列管理
@@ -3274,8 +3301,21 @@ const getBestTimesForFaction = (hourlyWinRates, factionNumber) => {
   border: 1px solid #e4e7ed;
 }
 
+.api-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
 .api-help-text {
   margin-top: 5px;
+}
+
+.api-help-subhint {
+  margin-top: 6px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .progress-section {
