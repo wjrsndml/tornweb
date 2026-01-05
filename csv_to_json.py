@@ -5,17 +5,29 @@ import csv
 import json
 from collections import defaultdict
 
-def normalize_slot_code(slot_code):
+def get_base_slot_name(slot_code):
+    """获取slot_code的基础名称（去掉#1、#2等后缀）"""
+    if '#' in slot_code:
+        return slot_code.split('#')[0]
+    return slot_code
+
+def normalize_slot_code(slot_code, has_higher_version=False):
     """
     标准化slot_code：
-    - 如果以#1结尾，去掉#1，并去掉名称中的空格（如"Cat Burglar#1" -> "CatBurglar"）
+    - 如果以#1结尾：
+      - 如果有#2及以上版本，保留#1（如"Picklock#1" -> "Picklock#1"）
+      - 如果没有#2及以上版本，去掉#1并去掉空格（如"Bomber#1" -> "Bomber"）
     - 如果以#2或更高结尾，保留完整的slot_code（如"Picklock#2"）
     - 否则保留原样
     """
     if slot_code.endswith('#1'):
-        # 去掉#1，并去掉空格
-        base_name = slot_code[:-2].replace(' ', '')
-        return base_name
+        if has_higher_version:
+            # 有#2及以上版本，保留#1
+            return slot_code
+        else:
+            # 没有#2及以上版本，去掉#1并去掉空格
+            base_name = slot_code[:-2].replace(' ', '')
+            return base_name
     return slot_code
 
 def format_json_compact(obj, indent=4, level=0):
@@ -59,8 +71,8 @@ def convert_csv_to_json(csv_file_path, json_file_path):
     CSV格式：,oc_name,rank,slot_code,pass_rate_min,pass_rate_max,coefficient
     JSON格式：按oc_name -> rank -> slot_code -> [[min, max, coefficient], ...] 组织
     """
-    # 使用嵌套的defaultdict来组织数据
-    result = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    # 第一步：扫描所有数据，找出哪些slot_code有#2及以上的版本
+    slot_versions = defaultdict(lambda: defaultdict(lambda: defaultdict(set)))  # (oc_name, rank, base_name) -> {versions}
     
     try:
         with open(csv_file_path, 'r', encoding='utf-8') as f:
@@ -68,10 +80,46 @@ def convert_csv_to_json(csv_file_path, json_file_path):
             for row in reader:
                 oc_name = row['oc_name'].strip()
                 rank = row['rank'].strip()
-                slot_code = normalize_slot_code(row['slot_code'].strip())
+                slot_code = row['slot_code'].strip()
+                
+                # 提取版本号
+                base_name = get_base_slot_name(slot_code)
+                if '#' in slot_code:
+                    try:
+                        version = int(slot_code.split('#')[1])
+                        slot_versions[oc_name][rank][base_name].add(version)
+                    except (ValueError, IndexError):
+                        pass
+        
+        # 确定哪些基础名称有#2及以上的版本
+        has_higher_version = defaultdict(lambda: defaultdict(dict))  # (oc_name, rank, base_name) -> bool
+        
+        for oc_name in slot_versions:
+            for rank in slot_versions[oc_name]:
+                for base_name, versions in slot_versions[oc_name][rank].items():
+                    # 检查是否有#2及以上的版本
+                    has_higher = any(v >= 2 for v in versions)
+                    has_higher_version[oc_name][rank][base_name] = has_higher
+        
+        # 第二步：读取数据并标准化slot_code
+        result = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        
+        with open(csv_file_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                oc_name = row['oc_name'].strip()
+                rank = row['rank'].strip()
+                original_slot_code = row['slot_code'].strip()
                 pass_rate_min = int(row['pass_rate_min'].strip())
                 pass_rate_max = int(row['pass_rate_max'].strip())
                 coefficient = float(row['coefficient'].strip())
+                
+                # 判断是否有#2及以上版本
+                base_name = get_base_slot_name(original_slot_code)
+                has_higher = has_higher_version.get(oc_name, {}).get(rank, {}).get(base_name, False)
+                
+                # 标准化slot_code
+                slot_code = normalize_slot_code(original_slot_code, has_higher)
                 
                 # 添加数据到对应位置
                 result[oc_name][rank][slot_code].append([
