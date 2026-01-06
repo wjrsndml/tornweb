@@ -121,10 +121,10 @@ def convert_csv_to_json(csv_file_path, json_file_path):
                 # 标准化slot_code
                 slot_code = normalize_slot_code(original_slot_code, has_higher)
                 
-                # 添加数据到对应位置
+                # 添加数据到对应位置，区间上下限各加1
                 result[oc_name][rank][slot_code].append([
-                    pass_rate_min,
-                    pass_rate_max,
+                    pass_rate_min + 1,
+                    pass_rate_max + 1,
                     coefficient
                 ])
         
