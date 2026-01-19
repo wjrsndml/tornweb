@@ -71,6 +71,10 @@
           <el-icon><DataLine /></el-icon>
           <span>OC 模拟器</span>
         </el-menu-item>
+        <el-menu-item index="oc_analytics">
+          <el-icon><TrendCharts /></el-icon>
+          <span>OC 收益分析</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -356,6 +360,11 @@
       <div v-if="activeMenu === 'oc_simulator'" class="content-section">
         <OcSimulator :api-key="globalApiKey" />
       </div>
+
+      <!-- OC 收益分析 -->
+      <div v-if="activeMenu === 'oc_analytics'" class="content-section" style="height: 100%">
+        <OcAnalytics />
+      </div>
     </el-main>
   </div>
 </template>
@@ -377,7 +386,8 @@ import FactionAttacksGrabber from './components/FactionAttacksGrabber.vue'
 import ForumThreadGrabber from './components/ForumThreadGrabber.vue'
 import UserForumPostsGrabber from './components/UserForumPostsGrabber.vue'
 import OcSimulator from './components/OcSimulator.vue'
-import { Box, Operation, Link, DataAnalysis, Download, Document, User, DataLine } from '@element-plus/icons-vue'
+import OcAnalytics from './components/OcAnalytics.vue'
+import { Box, Operation, Link, DataAnalysis, Download, Document, User, DataLine, TrendCharts } from '@element-plus/icons-vue'
 import {
   clearStoredApiKey,
   getRememberApiKeyEnabled,
@@ -400,7 +410,8 @@ const ALLOWED_MENUS = new Set([
   'grabber',
   'forum',
   'userforum',
-  'oc_simulator'
+  'oc_simulator',
+  'oc_analytics'
 ])
 
 const normalizeActiveMenu = (menu) => {
