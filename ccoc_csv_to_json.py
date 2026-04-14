@@ -113,6 +113,6 @@ def convert_csv_to_json(csv_file_path, json_file_path):
         print(f"转换过程中发生错误：{e}")
 
 if __name__ == '__main__':
-    csv_file = 'ccocxishu.csv'
+    csv_file = 'new7oc.csv'
     json_file = 'xishucc.json'
     convert_csv_to_json(csv_file, json_file)
