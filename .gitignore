@@ -40,6 +40,9 @@ coverage
 # PHP 原型（已移植为 functions/api/feishu.js）。勿提交：Pages 会把它当静态文件公开源码
 feishu.php
 
+# wrangler 本地调试产生的状态与临时文件
+.wrangler/
+
 # Cypress
 cypress/videos/
 cypress/screenshots/
