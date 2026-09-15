@@ -1,0 +1,1073 @@
+// ==UserScript==
+// @name         daguofan - Torn OC 收益显示
+// @namespace    SMTH-CONCORD
+// @version      0.6.0
+// @description  自动读取飞书岗位系数表，在 Torn Recruiting 栏位对 7/8 级 OC 的空缺岗位显示工分，支持帮派选择和总工分/日均工分模式。
+// @author       brbbswd[2727286]
+// @match        https://www.torn.com/factions.php*
+// @run-at       document-idle
+// @grant        GM_xmlhttpRequest
+// @connect      smth-torncity.feishu.cn
+// @connect      accounts.feishu.cn
+// @connect      login.feishu.cn
+// @connect      tornweb.tysnode.uk
+// @license MIT
+// ==/UserScript==
+
+(function () {
+  "use strict";
+
+  const T = {
+    // UI
+    mode_toggle_title: "切换显示模式：日均或总工分",
+    mode_toggle_label_daily: "日均工分模式",
+    mode_toggle_hint: "(关=总工分)",
+    faction_label: "系数帮派",
+    xishu_source: "岗位系数表",
+    faction_choose: "请选择系数",
+    faction_choose_title: "选择岗位系数",
+    faction_choose_hint: "首次使用请选择帮派。以后可在页面的“系数帮派”下拉框随时更改。",
+    faction_other: "其它系数",
+    faction_other_id: "其它帮派ID（如 HP：2095，SVH：36134）",
+    faction_save: "保存并使用",
+    faction_later: "稍后选择",
+    xishu_loading: "正在更新系数…",
+    xishu_ready: "飞书系数已更新",
+    xishu_cached: "系数更新失败，使用上次缓存",
+    xishu_failed: "系数读取失败，点击重试",
+    xishu_missing_faction: "表中没有该帮派系数",
+    xishu_refresh_title: "点击刷新飞书系数；每30分钟自动更新",
+    xishu_relay: "当前经服务器转发读取飞书（无Cookie环境，如手机PDA）",
+    // Badge
+    badge_total: "工分 {value}",
+    badge_daily: "{value}/天",
+    warn_chance_too_low: "成功率低",
+    // 日志
+    err_load_mode: "读取模式失败：",
+    err_save_mode: "保存模式失败：",
+    err_process_failed: "处理失败：",
+    warn_missing_tabs: "未找到 Recruiting/Planning/Completed tab 容器，默认按 Recruiting 处理",
+    log_not_target_page: "非目标页面，跳过。pathname/search/hash =",
+    warn_missing_oc_area: "未找到 OC 列表容器，等待页面渲染...",
+    log_not_in_recruiting: "不在 Recruiting，清理后退出。",
+    log_found_cards: "找到 OC 卡片数量：",
+    log_current_tab: "当前 tab =",
+    log_oc_slot_stats: "OC：",
+    log_write_profit: "写入工分：",
+    warn_parse_level: "无法解析 OC 等级，ocName =",
+    log_skip_non_78: "跳过非7/8级 OC：",
+    warn_parse_chance: "无法解析成功率，ocName/role =",
+    log_xishu_no_hit: "未命中系数：",
+  };
+  const t = (key, vars) => String(T[key] ?? key).replace(/\{(\w+)\}/g, (m, k) => vars?.[k] ?? m);
+
+  const STYLE_ID = "dgf-oc-profit-style";
+  const PROFIT_CLASS = "dgf-oc-profit";
+  const DEBUG = false; // 排查问题时设为 true；稳定后可改回 false
+
+  const BADGE_KIND_ATTR = "data-dgf-kind"; // profit | warn
+  const BADGE_SCORE_ATTR = "data-dgf-score"; // 数字字符串（用于排序/高亮的“分数”）
+  const BADGE_RUN_ATTR = "data-dgf-run";
+
+  const MODE_STORAGE_KEY = "dgf-oc-profit-mode"; // daily | total
+  const MODE_DAILY = "daily";
+  const MODE_TOTAL = "total";
+  const MODE_TOGGLE_ID = "dgf-oc-mode-toggle";
+
+  const WARN_CLASS = "dgf-oc-warn";
+  const HIGH_CLASS = "dgf-oc-high";
+  const TOP_CLASS = "dgf-oc-top";
+  const CARD_TOP_CLASS = "dgf-oc-card-top";
+
+  let currentMode = MODE_DAILY; // 默认：日均收益
+  let isMutatingByScript = false; // 避免 MutationObserver 因为我们自己的 DOM 写入而递归触发
+  let lastRecruitingState = null; // null/true/false
+  let lastTopCard = null;
+  let runSeq = 0;
+
+  const dlog = (...a) => DEBUG && console.log("[daguofan][oc-profit]", ...a);
+  const dwarn = (...a) => DEBUG && console.warn("[daguofan][oc-profit]", ...a);
+
+  // 数据结构：XISHU_TABLE[ocName][level][role] = [[min, max, a], ...]
+  // OC 名称忽略大小写，岗位忽略大小写、空格和 #（Picklock1 / Picklock #1 等价）。
+  // 来源为飞书公开共享视图；先加载全部分页，再一次性替换系数，避免半张表参与计算。
+  const DEFAULT_XISHU_TABLE = {};
+  let XISHU_TABLE = DEFAULT_XISHU_TABLE;
+
+  const XISHU_SHARE_TOKEN = "shrcnGAYPu4vSyCNN3KVbz2FAmc";
+  const XISHU_SHARE_URL = `https://smth-torncity.feishu.cn/share/base/view/${XISHU_SHARE_TOKEN}`;
+  const XISHU_API_BASE = "https://smth-torncity.feishu.cn/space/api/bitable/external/view/share/";
+  const XISHU_CACHE_KEY = `dgf-xishu-feishu-v1:${XISHU_SHARE_TOKEN}`;
+  const XISHU_FACTION_KEY = "dgf-xishu-faction-id";
+  const XISHU_REFRESH_MS = 30 * 60 * 1000;
+  const XISHU_RETRY_MS = 5 * 60 * 1000;
+  const XISHU_CONTROLS_ID = "dgf-xishu-controls";
+  const XISHU_STATUS_ID = "dgf-xishu-status";
+  const XISHU_FACTION_SELECT_ID = "dgf-xishu-faction";
+  const XISHU_FACTION_DIALOG_ID = "dgf-xishu-faction-dialog";
+
+  // 手机 Torn PDA 的 GM_xmlhttpRequest 由原生 HTTP 客户端实现，请求之间不保存 Cookie，
+  // 而飞书游客会话要在多次 302 跳转中逐跳收发 Cookie，因此 PDA 上 API 永远返回 code=5。
+  // 此时改走自己服务器上的转发器（Cloudflare Pages Function，随仓库自动部署）：
+  // 由服务器携带 Cookie 访问飞书并原样返回，数据源仍是飞书共享表，且响应同样经过下面的完整性校验。
+  const XISHU_RELAY_URL = "https://tornweb.tysnode.uk/api/feishu";
+  let xishuUseRelay = false;
+
+  let currentFactionId = ""; // 首次使用必须自行选择，避免误用另一个帮派的系数。
+  let xishuPromptDismissed = false;
+  let xishuTables = {};
+  let xishuStatus = "xishu_loading";
+  let xishuUpdatedAt = 0;
+  let xishuError = "";
+  let xishuLoadPromise = null;
+  let xishuNextRefreshAt = 0;
+  let xishuRefreshTimer = null;
+  let xishuInitialized = false;
+
+  const isObject = (obj) => obj !== null && typeof obj === "object" && !Array.isArray(obj);
+
+  function isValidXishuTable(obj) {
+    return isObject(obj) && Object.keys(obj).length > 0 && Object.values(obj).every((levels) =>
+      isObject(levels) && Object.keys(levels).length > 0 && Object.entries(levels).every(([level, roles]) =>
+        /^\d+$/.test(level) && isObject(roles) && Object.keys(roles).length > 0 && Object.values(roles).every((ranges) =>
+          Array.isArray(ranges) && ranges.length > 0 && ranges.every((r, index) =>
+            Array.isArray(r) && r.length === 3 && r.every(Number.isFinite) &&
+            Number.isInteger(r[0]) && Number.isInteger(r[1]) && r[0] >= 0 && r[1] <= 101 &&
+            r[0] < r[1] && r[2] >= 0 && (index === 0 || ranges[index - 1][1] <= r[0])
+          )
+        )
+      )
+    );
+  }
+
+  const isValidFactionTables = (tables) =>
+    isObject(tables) && Object.keys(tables).length > 0 &&
+    Object.entries(tables).every(([id, table]) => /^\d+$/.test(id) && isValidXishuTable(table));
+
+  function selectXishuFaction() {
+    XISHU_TABLE = xishuTables[currentFactionId] || DEFAULT_XISHU_TABLE;
+  }
+
+  function loadXishuCache() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(XISHU_CACHE_KEY) || "null");
+      // 启动时总会联网刷新；断网时保留最后一次完整数据，并在界面注明使用缓存。
+      if (parsed?.source === XISHU_SHARE_TOKEN && Number.isFinite(parsed.ts) && parsed.ts > 0 &&
+          isValidFactionTables(parsed.tables)) return parsed;
+    } catch (e) {
+      console.error("[daguofan][xishu] load cache failed:", e);
+    }
+    return null;
+  }
+
+  function saveXishuCache() {
+    try {
+      localStorage.setItem(XISHU_CACHE_KEY, JSON.stringify({
+        source: XISHU_SHARE_TOKEN, ts: xishuUpdatedAt, tables: xishuTables,
+      }));
+    } catch (e) {
+      console.error("[daguofan][xishu] save cache failed:", e);
+    }
+  }
+
+  function gmFetch(url, json = true) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== "function") {
+        reject(new Error("GM_xmlhttpRequest is not available (missing @grant?)"));
+        return;
+      }
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        timeout: 30000,
+        // 共享视图需要游客 Cookie；保留油猴默认的 Cookie/重定向行为。
+        headers: { "Cache-Control": "no-cache", Accept: json ? "application/json" : "text/html" },
+        onload: (resp) => {
+          try {
+            const status = Number(resp?.status || 0);
+            if (!(status >= 200 && status < 300)) {
+              reject(new Error(`gm http ${status}`));
+              return;
+            }
+            resolve(json ? JSON.parse(String(resp?.responseText ?? "")) : String(resp?.responseText ?? ""));
+          } catch (e) {
+            reject(e);
+          }
+        },
+        onerror: () => reject(new Error("gm request error")),
+        ontimeout: () => reject(new Error("gm request timeout")),
+        onabort: () => reject(new Error("gm request aborted")),
+      });
+    });
+  }
+
+  function parseFeishuObject(value, label) {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    if (!isObject(parsed)) throw new Error(`飞书${label}格式错误`);
+    return parsed;
+  }
+
+  function checkFeishuResult(result) {
+    if (result?.code !== 0 || !isObject(result.data)) {
+      throw new Error(`飞书读取失败 (${result?.code ?? "unknown"}): ${result?.msg || "返回数据异常"}`);
+    }
+    return result.data;
+  }
+
+  async function fetchFeishuData(endpoint, params = {}, allowGuestInit = false) {
+    const query = new URLSearchParams({ shareToken: XISHU_SHARE_TOKEN, removeFmlExtra: "true", ...params });
+    if (xishuUseRelay) return checkFeishuResult(await gmFetch(`${XISHU_RELAY_URL}?e=${endpoint}&${query}`));
+    const url = `${XISHU_API_BASE}${endpoint}?${query}`;
+    let result = await gmFetch(url);
+    if (result?.code === 5 && allowGuestInit) {
+      // 首次访问会经 accounts/login.feishu.cn 自动建立游客会话，无需账号或 API 密钥。
+      await gmFetch(XISHU_SHARE_URL, false);
+      result = await gmFetch(url);
+    }
+    return checkFeishuResult(result);
+  }
+
+  function buildFeishuTables(snapshot, records) {
+    const fields = parseFeishuObject(snapshot.fieldMap, "字段");
+    const cascadeFields = snapshot.viewShareEntity?.cascadeProxyFieldMap || {};
+    const fieldIds = {};
+    const options = {};
+    for (const [id, field] of Object.entries(fields)) {
+      fieldIds[String(field.name).trim()] = id;
+      options[id] = new Map([
+        ...(field.property?.options || []),
+        ...(cascadeFields[id]?.property?.options || []),
+      ].map((option) => [option.id, option.name]));
+    }
+    for (const name of ["OC名称", "等级", "岗位名称-简称", "成功率下限", "成功率上限", "系数", "帮派ID"]) {
+      if (!fieldIds[name]) throw new Error(`飞书表缺少列：${name}`);
+    }
+
+    const cell = (record, name) => record[fieldIds[name]]?.value;
+    const optionText = (name, value) => {
+      const text = options[fieldIds[name]].get(value) ?? value;
+      if (typeof text !== "string" || /^opt/.test(text)) throw new Error(`无法解析飞书选项：${name}`);
+      return text.trim();
+    };
+    const number = (record, name) => {
+      const value = cell(record, name);
+      return (typeof value === "number" || (typeof value === "string" && value.trim())) ? Number(value) : NaN;
+    };
+
+    const tables = Object.create(null);
+    for (const [recordId, record] of Object.entries(records)) {
+      const factionValues = cell(record, "帮派ID");
+      // 未指定帮派的记录不参与计算，避免把其他帮派或新建空行混进来。
+      if (factionValues == null || (Array.isArray(factionValues) && factionValues.length === 0)) continue;
+      const factionIds = (Array.isArray(factionValues) ? factionValues : [factionValues])
+        .map((value) => optionText("帮派ID", value));
+      const ocName = normalizeOcName(optionText("OC名称", cell(record, "OC名称")));
+      const role = normalizeRole(optionText("岗位名称-简称", cell(record, "岗位名称-简称")));
+      const level = number(record, "等级");
+      const min = number(record, "成功率下限");
+      const max = number(record, "成功率上限");
+      const coeff = number(record, "系数");
+      if (!ocName || !role || !Number.isInteger(level) || level <= 0 ||
+          !factionIds.every((id) => /^\d+$/.test(id)) ||
+          !Number.isInteger(min) || !Number.isInteger(max) || min < 0 || max > 100 || min >= max ||
+          !Number.isFinite(coeff) || coeff < 0) {
+        throw new Error(`飞书系数记录无效：${recordId}`);
+      }
+      for (const factionId of new Set(factionIds)) {
+        const byOc = tables[factionId] ||= Object.create(null);
+        const byLevel = byOc[ocName] ||= Object.create(null);
+        const byRole = byLevel[String(level)] ||= Object.create(null);
+        // 飞书是 (下限, 上限]，Torn 成功率为整数；转换成 [min, max)。
+        // 例如飞书 (64, 65] -> [65, 66)，保证 65% 和 100% 都准确命中。
+        (byRole[role] ||= []).push([min + 1, max + 1, coeff]);
+      }
+    }
+    for (const table of Object.values(tables)) {
+      for (const levels of Object.values(table)) {
+        for (const roles of Object.values(levels)) {
+          for (const ranges of Object.values(roles)) ranges.sort((a, b) => a[0] - b[0]);
+        }
+      }
+    }
+    if (!isValidFactionTables(tables)) throw new Error("飞书系数为空或存在重复/重叠区间");
+    return tables;
+  }
+
+  async function refreshXishuTable() {
+    try {
+      await downloadFeishuTables();
+    } catch (e) {
+      // 直连失败（手机 PDA 等无 Cookie 环境）：改用转发器整体重试一次；转发也失败才报错。
+      if (xishuUseRelay) throw e;
+      xishuUseRelay = true;
+      await downloadFeishuTables();
+    }
+  }
+
+  async function downloadFeishuTables() {
+    const data = await fetchFeishuData("records_and_meta", {}, true);
+    const snapshot = parseFeishuObject(data.snapshot, "快照");
+    let page = parseFeishuObject(snapshot.viewShareEntity, "共享视图");
+    const records = Object.assign(Object.create(null), parseFeishuObject(page.recordMap, "记录"));
+    const total = page.recordsNum;
+    if (!Number.isInteger(total) || total <= 0) throw new Error("飞书表没有系数记录");
+    let pages = 1;
+    while (page.hasMore === true) {
+      if (++pages > 100 || !Number.isInteger(page.offsetNum) || page.offsetNum <= 0 || !page.revToken) {
+        throw new Error("飞书分页信息异常");
+      }
+      const previousOffset = page.offsetNum;
+      const next = await fetchFeishuData("records_by_page", {
+        offset: page.offset || "", offsetNum: String(page.offsetNum), limit: "1000", revToken: page.revToken,
+      });
+      page = parseFeishuObject(next.records, "分页记录");
+      const before = Object.keys(records).length;
+      Object.assign(records, parseFeishuObject(page.recordMap, "记录"));
+      if (Object.keys(records).length <= before || page.recordsNum !== total ||
+          (page.hasMore === true && page.offsetNum <= previousOffset)) {
+        throw new Error("飞书分页未完整返回或表格正在变化，请稍后重试");
+      }
+    }
+    if (page.hasMore !== false || Object.keys(records).length !== total) {
+      throw new Error("飞书系数记录不完整");
+    }
+    const tables = buildFeishuTables(snapshot, records);
+    // 只有所有分页和校验成功后，才覆盖内存与缓存中的上一份完整数据。
+    xishuTables = tables;
+    xishuUpdatedAt = Date.now();
+    selectXishuFaction();
+    saveXishuCache();
+  }
+
+  function initializeXishu() {
+    if (xishuInitialized) return;
+    xishuInitialized = true;
+    try {
+      const saved = localStorage.getItem(XISHU_FACTION_KEY);
+      if (/^\d+$/.test(saved || "")) currentFactionId = saved;
+    } catch (e) {
+      console.warn("[daguofan][xishu] load faction failed:", e);
+    }
+    const cached = loadXishuCache();
+    if (cached) {
+      xishuTables = cached.tables;
+      xishuUpdatedAt = cached.ts;
+      selectXishuFaction();
+    }
+  }
+
+  function ensureXishuLoaded(force = false) {
+    initializeXishu();
+    if (xishuLoadPromise) return xishuLoadPromise;
+    if (!force && Date.now() < xishuNextRefreshAt) return Promise.resolve(false);
+    clearTimeout(xishuRefreshTimer);
+    xishuStatus = "xishu_loading";
+    xishuError = "";
+    updateXishuControls();
+    xishuLoadPromise = refreshXishuTable()
+      .then(() => {
+        xishuStatus = "xishu_ready";
+        xishuNextRefreshAt = Date.now() + XISHU_REFRESH_MS;
+        return true;
+      })
+      .catch((e) => {
+        xishuStatus = "xishu_cached";
+        xishuError = e.message;
+        xishuNextRefreshAt = Date.now() + XISHU_RETRY_MS;
+        console.warn("[daguofan][xishu] load Feishu failed, keeping last data:", e);
+        return false;
+      })
+      .finally(() => {
+        xishuLoadPromise = null;
+        updateXishuControls();
+        scheduleProcess();
+        xishuRefreshTimer = setTimeout(() => ensureXishuLoaded(), Math.max(0, xishuNextRefreshAt - Date.now()));
+      });
+    return xishuLoadPromise;
+  }
+
+  let observer = null;
+  let scheduled = false;
+
+  // Torn 前端大量使用 CSS Modules：class 形如 `${prefix}___<hash>`，不同版本 hash 会变，统一按前缀匹配
+  const cssm = (prefix) => `[class^="${prefix}___"],[class*=" ${prefix}___"]`;
+
+  function hasClassPrefix(el, prefix) {
+    const p = `${prefix}___`;
+    for (const c of el?.classList || []) if (c.startsWith(p)) return true;
+    return false;
+  }
+
+  // PC 端有 #faction-crimes-root；移动端没有则退回 body 以便后续搜索
+  const getCrimesRoot = () => document.getElementById("faction-crimes-root") || document.body;
+
+  function findOcArea() {
+    const root = getCrimesRoot();
+    // 1. PC 端原本的列表 class；2. 移动端：找到任意一张卡片，取其父级作为容器
+    return root.querySelector(".tt-oc2-list") || root.querySelector("[data-oc-id]")?.parentElement || null;
+  }
+
+  // 卡片有 data-oc-id（比 class 稳定）
+  const getCards = (ocArea) => Array.from(ocArea.querySelectorAll("[data-oc-id]"));
+
+  function getSlotWrappers(card) {
+    // 以 slotHeader 按钮为锚点，向上取“包含 slotBody 的父级 div”
+    const wrappers = [];
+    const seen = new Set();
+    for (const btn of card.querySelectorAll(`button${cssm("slotHeader")}`)) {
+      const p = btn.parentElement;
+      const w = (p && p.querySelector(`:scope > div${cssm("slotBody")}`)) ? p : btn.closest("div");
+      if (w && !seen.has(w)) {
+        seen.add(w);
+        wrappers.push(w);
+      }
+    }
+    return wrappers;
+  }
+
+  function isTargetPage() {
+    // faction 页面 + URL 含 step=your + 页面里确实能找到 OC 内容
+    const ok = location.pathname.includes("factions.php") &&
+               location.search.includes("step=your") &&
+               (Boolean(document.getElementById("faction-crimes-root")) || Boolean(document.querySelector("[data-oc-id]")));
+    dlog("isTargetPage =", ok, "pathname/search =", location.pathname, location.search);
+    return ok;
+  }
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      .${PROFIT_CLASS}{ margin-left:6px; font-size:12px; opacity:.9; color:#cfcfcf; white-space:nowrap; padding:1px 6px; border-radius:6px; }
+      .${PROFIT_CLASS}.${WARN_CLASS}{ color:#111; background:#ff6b6b; border:1px solid rgba(0,0,0,.25); font-weight:700; opacity:1; }
+      .${PROFIT_CLASS}.${HIGH_CLASS}{ color:#111; background:#ffd43b; border:1px solid rgba(0,0,0,.25); font-weight:700; opacity:1; }
+      .${PROFIT_CLASS}.${TOP_CLASS}{ color:#111; background:#ffe066; border:1px solid rgba(0,0,0,.35); font-weight:800; opacity:1; box-shadow:0 0 0 2px rgba(255,224,102,.35),0 0 10px rgba(255,224,102,.55); }
+      .${CARD_TOP_CLASS}{ outline:2px solid rgba(255,224,102,.45); box-shadow:0 0 0 3px rgba(255,224,102,.15); }
+      #${MODE_TOGGLE_ID}, #${XISHU_CONTROLS_ID}{ display:inline-flex; align-items:center; gap:6px; margin-left:10px; padding:2px 6px; border-radius:8px; background:rgba(0,0,0,.18); border:1px solid rgba(255,255,255,.08); color:#cfcfcf; font-size:12px; line-height:1.2; white-space:nowrap; user-select:none; }
+      #${MODE_TOGGLE_ID} input, #${MODE_TOGGLE_ID} .dgf-oc-mode-label{ cursor:pointer; }
+      #${XISHU_CONTROLS_ID}{ flex-wrap:wrap; }
+      #${XISHU_CONTROLS_ID} select{ color:#eee; background:#333; border:1px solid #777; font-size:12px; }
+      #${XISHU_CONTROLS_ID} button, #${XISHU_CONTROLS_ID} a{ color:inherit; font:inherit; background:transparent; border:0; padding:0; cursor:pointer; text-decoration:underline; }
+      #${XISHU_FACTION_DIALOG_ID}{ box-sizing:border-box; width:min(420px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow-y:auto; padding:24px; border:1px solid #777; border-radius:12px; background:#252525; color:#eee; font:14px/1.6 sans-serif; box-shadow:0 8px 32px #0008; }
+      #${XISHU_FACTION_DIALOG_ID}::backdrop{ background:#0009; }
+      #${XISHU_FACTION_DIALOG_ID} h3{ margin:0 0 8px; color:inherit; font-size:18px; }
+      #${XISHU_FACTION_DIALOG_ID} p{ margin:0 0 16px; }
+      #${XISHU_FACTION_DIALOG_ID} label{ display:block; margin:10px 0; cursor:pointer; }
+      #${XISHU_FACTION_DIALOG_ID} [hidden]{ display:none; }
+      #${XISHU_FACTION_DIALOG_ID} input[type="text"]{ box-sizing:border-box; width:100%; padding:8px; margin-top:4px; }
+      #${XISHU_FACTION_DIALOG_ID} button{ padding:6px 12px; margin:12px 8px 0 0; cursor:pointer; }
+      /* 通用属性选择器（不限定 #faction-crimes-root），适配移动端 */
+      [data-dgf-flex="1"]{ display:flex; flex-direction:column; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function parseIntSafe(v) {
+    const m = String(v ?? "").match(/-?\d+/);
+    return m ? Number.parseInt(m[0], 10) : NaN;
+  }
+
+  function normalizeOcName(name) {
+    // 飞书选项和 Torn 的大小写可能不同，统一成小写和单空格。
+    return String(name ?? "").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function normalizeRole(role) {
+    // 飞书使用 Picklock1，Torn 显示 Picklock #1；反复归一化也保持同一结果。
+    return String(role ?? "").toLowerCase().replace(/[\s#]+/g, "");
+  }
+
+  function formatProfitValue(value) {
+    // 系数表里有 20.933 这样的三位小数；显示时最多保留 3 位并去掉尾随 0
+    return Number(value).toFixed(3).replace(/\.?0+$/, "");
+  }
+
+  function loadMode() {
+    try {
+      const v = localStorage.getItem(MODE_STORAGE_KEY);
+      if (v === MODE_DAILY || v === MODE_TOTAL) return v;
+    } catch (e) {
+      console.error("[daguofan][oc-profit]", t("err_load_mode"), e);
+    }
+    return MODE_DAILY;
+  }
+
+  function saveMode(mode) {
+    try {
+      localStorage.setItem(MODE_STORAGE_KEY, mode);
+    } catch (e) {
+      console.error("[daguofan][oc-profit]", t("err_save_mode"), e);
+    }
+  }
+
+  function updateXishuControls() {
+    const select = document.getElementById(XISHU_FACTION_SELECT_ID);
+    const status = document.getElementById(XISHU_STATUS_ID);
+    if (!select || !status) return;
+    const factionNames = { "20465": "PN", "2095": "HP", "36134": "SVH", "27902": "CCRC" };
+    const available = Object.keys(xishuTables);
+    const ids = [...new Set([currentFactionId, ...(available.length ? available : Object.keys(factionNames))])]
+      .filter(Boolean).sort();
+    if (select.dataset.factions !== ids.join(",")) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = t("faction_choose");
+      placeholder.disabled = true;
+      const other = document.createElement("option");
+      other.value = "other";
+      other.textContent = t("faction_other");
+      select.replaceChildren(placeholder, ...ids.map((id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = factionNames[id] ? `${factionNames[id]} (${id})` : id;
+        return option;
+      }), other);
+      select.dataset.factions = ids.join(",");
+    }
+    if (select.value !== currentFactionId) select.value = currentFactionId;
+    let key = xishuStatus;
+    if (!currentFactionId) key = "faction_choose";
+    else if (!xishuTables[currentFactionId]) {
+      if (key === "xishu_cached") key = "xishu_failed";
+      if (key === "xishu_ready") key = "xishu_missing_faction";
+    }
+    const text = t(key);
+    if (status.textContent !== text) status.textContent = text;
+    status.title = [
+      t("xishu_refresh_title"),
+      xishuUseRelay ? t("xishu_relay") : "",
+      xishuUpdatedAt ? new Date(xishuUpdatedAt).toLocaleString() : "",
+      xishuError,
+    ].filter(Boolean).join("\n");
+  }
+
+  function saveXishuFaction(id) {
+    if (!/^\d+$/.test(id)) return false;
+    currentFactionId = id;
+    try {
+      localStorage.setItem(XISHU_FACTION_KEY, currentFactionId);
+    } catch (e) {
+      console.warn("[daguofan][xishu] save faction failed:", e);
+    }
+    selectXishuFaction();
+    updateXishuControls();
+    scheduleProcess();
+    return true;
+  }
+
+  function showXishuFactionDialog(force = false, initialChoice = "") {
+    if (document.getElementById(XISHU_FACTION_DIALOG_ID) ||
+        (!force && (currentFactionId || xishuPromptDismissed))) return;
+    const dialog = document.createElement("dialog");
+    dialog.id = XISHU_FACTION_DIALOG_ID;
+    dialog.setAttribute("aria-labelledby", `${XISHU_FACTION_DIALOG_ID}-title`);
+    const form = document.createElement("form");
+    const title = document.createElement("h3");
+    title.id = `${XISHU_FACTION_DIALOG_ID}-title`;
+    title.textContent = t("faction_choose_title");
+    const hint = document.createElement("p");
+    hint.textContent = t("faction_choose_hint");
+    form.append(title, hint);
+
+    const otherLabel = document.createElement("label");
+    otherLabel.textContent = t("faction_other_id");
+    const otherInput = document.createElement("input");
+    otherInput.type = "text";
+    otherInput.inputMode = "numeric";
+    otherInput.pattern = "[0-9]+";
+    otherInput.required = true;
+    otherInput.placeholder = "2095 / 36134";
+    otherLabel.appendChild(otherInput);
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = t("faction_save");
+    let chosen = initialChoice || (["27902", "20465"].includes(currentFactionId) ? currentFactionId : currentFactionId ? "other" : "");
+    const updateChoice = () => {
+      otherLabel.hidden = chosen !== "other";
+      otherInput.disabled = chosen !== "other";
+      save.disabled = !chosen;
+    };
+    for (const [value, text] of [["27902", "CCRC (27902)"], ["20465", "PN (20465)"], ["other", t("faction_other")]]) {
+      const label = document.createElement("label");
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "dgf-coefficient-faction";
+      radio.value = value;
+      radio.checked = chosen === value;
+      radio.required = true;
+      radio.addEventListener("change", () => {
+        chosen = value;
+        updateChoice();
+        if (chosen === "other") otherInput.focus();
+      });
+      label.append(radio, document.createTextNode(` ${text}`));
+      form.appendChild(label);
+    }
+    if (chosen === "other" && !["27902", "20465"].includes(currentFactionId)) otherInput.value = currentFactionId;
+    updateChoice();
+    const later = document.createElement("button");
+    later.type = "button";
+    later.textContent = t("faction_later");
+    const close = () => {
+      xishuPromptDismissed = true;
+      try { dialog.close(); } catch (e) { /* 未以模态打开时忽略 */ }
+      dialog.remove();
+    };
+    later.addEventListener("click", close);
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const id = chosen === "other" ? otherInput.value.trim() : chosen;
+      if (saveXishuFaction(id)) close();
+    });
+    form.append(otherLabel, save, later);
+    dialog.appendChild(form);
+    document.body.appendChild(dialog);
+    try {
+      dialog.showModal();
+    } catch (e) {
+      // 部分手机 WebView 不支持 <dialog>.showModal()：直接内联显示，不能让整个脚本因此中断
+      console.warn("[daguofan][xishu] showModal unavailable, fallback to inline:", e);
+    }
+  }
+
+  function ensureXishuControls(container) {
+    if (container.querySelector(`#${XISHU_CONTROLS_ID}`)) return;
+    const wrap = document.createElement("span");
+    wrap.id = XISHU_CONTROLS_ID;
+    const label = document.createElement("label");
+    label.textContent = `${t("faction_label")} `;
+    const select = document.createElement("select");
+    select.id = XISHU_FACTION_SELECT_ID;
+    select.addEventListener("change", () => {
+      if (select.value === "other") {
+        updateXishuControls();
+        showXishuFactionDialog(true, "other");
+      } else {
+        saveXishuFaction(select.value);
+      }
+    });
+    label.appendChild(select);
+    const status = document.createElement("button");
+    status.id = XISHU_STATUS_ID;
+    status.type = "button";
+    status.addEventListener("click", () => {
+      if (!currentFactionId) showXishuFactionDialog(true);
+      else ensureXishuLoaded(true);
+    });
+    const source = document.createElement("a");
+    source.href = XISHU_SHARE_URL;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = t("xishu_source");
+    wrap.append(label, status, source);
+    container.appendChild(wrap);
+    updateXishuControls();
+  }
+
+  function findTabsContainer() {
+    const root = getCrimesRoot() || document;
+    return root.querySelector(`#faction-crimes-root ${cssm("buttonsContainer")}`) ||
+           root.querySelector(cssm("buttonsContainer")) || null;
+  }
+
+  function ensureModeToggle() {
+    const container = findTabsContainer() || getCrimesRoot();
+    if (!container) return;
+
+    ensureXishuControls(container);
+    if (container.querySelector(`#${MODE_TOGGLE_ID}`)) return;
+
+    const wrap = document.createElement("label");
+    wrap.id = MODE_TOGGLE_ID;
+    wrap.title = t("mode_toggle_title");
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = currentMode === MODE_DAILY;
+    input.addEventListener("change", () => {
+      currentMode = input.checked ? MODE_DAILY : MODE_TOTAL;
+      saveMode(currentMode);
+      scheduleProcess();
+    }, { passive: true });
+
+    const text = document.createElement("span");
+    text.className = "dgf-oc-mode-label";
+    text.textContent = t("mode_toggle_label_daily");
+
+    const hint = document.createElement("span");
+    hint.style.opacity = "0.7";
+    hint.textContent = t("mode_toggle_hint");
+
+    // 放到 tab 容器最后面
+    wrap.append(input, text, hint);
+    container.appendChild(wrap);
+  }
+
+  function parseRemainingDays(text) {
+    const s = String(text || "").trim();
+    // "5 days 17 hours 43 minutes 14 seconds"
+    const m = s.match(/(\d+)\s*days?\s+(\d+)\s*hours?\s+(\d+)\s*minutes?\s+(\d+)\s*seconds?/i);
+    let parts = m ? m.slice(1).map(Number) : null;
+    if (!parts) {
+      // "DD:HH:MM:SS"；有时也可能只有 "HH:MM:SS"
+      parts = s.split(":").map((x) => Number.parseInt(x, 10));
+      if (parts.length === 3) parts.unshift(0);
+      if (parts.length !== 4) return null;
+    }
+    if (parts.some((x) => !Number.isFinite(x))) return null;
+    const totalSeconds = ((parts[0] * 24 + parts[1]) * 60 + parts[2]) * 60 + parts[3];
+    return totalSeconds > 0 ? totalSeconds / 86400 : null;
+  }
+
+  function getOcRemainingDays(card, vacantCount) {
+    // recruiting：按空位数估算剩余天数
+    if (card.querySelector('[aria-label="recruiting"]')) return vacantCount > 0 ? vacantCount : null;
+    // active/planning：优先从 aria-label 解析，退回时钟文本
+    const clockEl = card.querySelector(`div${cssm("title")}[aria-label]`) || card.querySelector(`div${cssm("title")}`);
+    if (!clockEl) return null;
+    return parseRemainingDays(clockEl.getAttribute("aria-label")) || parseRemainingDays(clockEl.textContent);
+  }
+
+  function isRecruitingTabActive() {
+    // Torn OC 页面顶部 tab：Recruiting / Planning / Completed
+    // 只在 tab 容器里找“当前激活”的按钮，避免页面其他地方也有 active 类导致误判
+    const container = findTabsContainer();
+    if (!container) {
+      // 有些情况下（或未来 UI 改动）可能没有这个容器；此时宁可继续处理，也不要直接失效
+      dwarn(t("warn_missing_tabs"));
+      return true;
+    }
+
+    const activeBtn =
+      container.querySelector('button[aria-selected="true"]') ||
+      container.querySelector('button[aria-current="true"]') ||
+      container.querySelector(`button${cssm("active")}`);
+
+    const nameEl = activeBtn?.querySelector(cssm("tabName")) || activeBtn;
+    const text = (nameEl?.textContent || "").trim().toLowerCase();
+    const isRecruiting = text === "recruiting";
+    dlog(t("log_current_tab"), JSON.stringify(text), "isRecruiting =", isRecruiting);
+    return isRecruiting;
+  }
+
+  const removeAllBadges = (root) => root.querySelectorAll(`.${PROFIT_CLASS}`).forEach((el) => el.remove());
+
+  const ensureOcAreaFlex = (ocArea) => ocArea?.setAttribute("data-dgf-flex", "1");
+
+  function isSlotVacant(slotWrapperEl) {
+    // 空缺岗位：外层常见 waitingJoin___*，slotBody 不带 validSlot，并出现 joinContainer/joinButton
+    if (!slotWrapperEl) return false;
+
+    // 强特征：出现 Join 区域 / Join 按钮 -> 认为空缺
+    if (hasClassPrefix(slotWrapperEl, "waitingJoin") ||
+        slotWrapperEl.querySelector(cssm("joinContainer")) ||
+        slotWrapperEl.querySelector(`button${cssm("joinButton")}`)) {
+      return true;
+    }
+
+    // 强特征：出现成员信息 / 个人主页链接 -> 认为已有人
+    if (slotWrapperEl.querySelector(cssm("badgeContainer")) ||
+        slotWrapperEl.querySelector(`${cssm("badge")}, ${cssm("textName")}`) ||
+        slotWrapperEl.querySelector('a[href*="profiles.php?XID="]')) {
+      return false;
+    }
+
+    // 兜底：宁可不显示，也不要误显示在“已有人岗位”
+    return false;
+  }
+
+  function upsertBadge(slotHeaderBtn, { text, kind, profitValue, runId }) {
+    const existing = slotHeaderBtn.querySelector(`.${PROFIT_CLASS}`);
+    const badge = existing || document.createElement("span");
+    badge.className = PROFIT_CLASS;
+    badge.textContent = text;
+    badge.setAttribute(BADGE_KIND_ATTR, kind);
+    if (runId) badge.setAttribute(BADGE_RUN_ATTR, String(runId));
+
+    if (kind === "warn") {
+      badge.classList.add(WARN_CLASS);
+      badge.removeAttribute(BADGE_SCORE_ATTR);
+    } else {
+      badge.classList.remove(WARN_CLASS, HIGH_CLASS, TOP_CLASS);
+      if (Number.isFinite(profitValue)) badge.setAttribute(BADGE_SCORE_ATTR, String(profitValue));
+      else badge.removeAttribute(BADGE_SCORE_ATTR);
+    }
+
+    if (existing) return;
+    // 优先放在成功率数字后面；如果结构变化，再兜底插到标题后
+    const chanceEl = slotHeaderBtn.querySelector(`div${cssm("successChance")}`);
+    if (chanceEl?.parentNode) chanceEl.insertAdjacentElement("afterend", badge);
+    else {
+      const titleEl = slotHeaderBtn.querySelector(`span${cssm("title")}`);
+      if (titleEl) titleEl.insertAdjacentElement("afterend", badge);
+      else slotHeaderBtn.appendChild(badge);
+    }
+  }
+
+  function getXishuCoeff(ocName, level, role, chance) {
+    // 约定：r 是 [min, max, a]，按 [min, max) 命中
+    const ranges = XISHU_TABLE[normalizeOcName(ocName)]?.[String(level)]?.[normalizeRole(role)];
+    for (const r of ranges || []) if (chance >= r[0] && chance < r[1]) return r[2];
+    return null;
+  }
+
+  function getXishuMatchResult(ocName, level, role, chance) {
+    const byOc = XISHU_TABLE[normalizeOcName(ocName)];
+    if (!byOc) return { a: null, reason: "missing_oc" };
+    const byLevel = byOc[String(level)];
+    if (!byLevel) return { a: null, reason: "missing_level" };
+    const ranges = byLevel[normalizeRole(role)];
+    if (!Array.isArray(ranges) || ranges.length === 0) return { a: null, reason: "missing_role" };
+
+    const a = getXishuCoeff(ocName, level, role, chance);
+    if (Number.isFinite(a)) return { a, reason: "ok" };
+
+    // 区间已按下限排序且无重叠
+    const minAll = ranges[0][0];
+    const maxAll = ranges[ranges.length - 1][1];
+    if (chance < minAll) return { a: null, reason: "chance_too_low", minAll, maxAll };
+    if (chance >= maxAll) return { a: null, reason: "chance_too_high", minAll, maxAll };
+    return { a: null, reason: "no_match", minAll, maxAll };
+  }
+
+  function applyProfitHighlights(root) {
+    const scoreBadges = root.querySelectorAll(`.${PROFIT_CLASS}[${BADGE_KIND_ATTR}="profit"]`);
+    let maxScore = 0;
+    for (const el of scoreBadges) {
+      const v = Number.parseFloat(el.getAttribute(BADGE_SCORE_ATTR) || "");
+      if (Number.isFinite(v)) maxScore = Math.max(maxScore, v);
+    }
+    if (!(maxScore > 0)) return;
+
+    for (const el of scoreBadges) {
+      el.classList.remove(HIGH_CLASS, TOP_CLASS);
+      const v = Number.parseFloat(el.getAttribute(BADGE_SCORE_ATTR) || "");
+      if (!Number.isFinite(v)) continue;
+      if (v === maxScore) el.classList.add(TOP_CLASS);
+      else if (v >= maxScore * 0.8) el.classList.add(HIGH_CLASS);
+    }
+  }
+
+  function applyCardOrderByScore(ocArea, scoredCards) {
+    // 不移动 DOM（React 页面移动节点风险大），仅用 CSS order 做视觉排序
+    ensureOcAreaFlex(ocArea);
+
+    const sorted = [...scoredCards].sort((a, b) => {
+      const as = Number.isFinite(a.score) ? a.score : -1;
+      const bs = Number.isFinite(b.score) ? b.score : -1;
+      return bs !== as ? bs - as : a.originalIndex - b.originalIndex;
+    });
+
+    // order 必须是整数：按名次赋值即可
+    for (let i = 0; i < sorted.length; i++) {
+      const el = sorted[i].el;
+      const nextOrder = String(i);
+      if (el && el.style.order !== nextOrder) el.style.order = nextOrder;
+    }
+  }
+
+  function cleanupStaleBadges(root, runId) {
+    const rid = String(runId);
+    root.querySelectorAll(`.${PROFIT_CLASS}`).forEach((el) => {
+      if ((el.getAttribute(BADGE_RUN_ATTR) || "") !== rid) el.remove();
+    });
+  }
+
+  function processOnce() {
+    if (!isTargetPage()) {
+      dlog(t("log_not_target_page"), location.pathname, location.search, location.hash);
+      return;
+    }
+
+    const ocArea = findOcArea();
+    if (!ocArea) {
+      dwarn(t("warn_missing_oc_area"));
+      return;
+    }
+
+    ensureStyle();
+    ensureModeToggle();
+    showXishuFactionDialog();
+
+    // 只在 Recruiting 栏位显示
+    const isRecruiting = isRecruitingTabActive();
+    if (!isRecruiting) {
+      // 只有在“从 recruiting -> 非 recruiting”切换时才做一次性清理，避免每帧都删 DOM
+      if (lastRecruitingState !== false) {
+        isMutatingByScript = true;
+        try {
+          removeAllBadges(ocArea);
+          if (lastTopCard) lastTopCard.classList.remove(CARD_TOP_CLASS);
+          lastTopCard = null;
+        } finally {
+          isMutatingByScript = false;
+        }
+      }
+      lastRecruitingState = false;
+      dlog(t("log_not_in_recruiting"));
+      return;
+    }
+    lastRecruitingState = true;
+
+    const cards = getCards(ocArea);
+    dlog(t("log_found_cards"), cards.length);
+
+    // 先做读/算，最后集中写 DOM，减少抖动
+    const badgeOps = [];
+    const scoredCards = [];
+    const runId = ++runSeq;
+
+    for (let cardIndex = 0; cardIndex < cards.length; cardIndex++) {
+      const card = cards[cardIndex];
+      const ocName = normalizeOcName(card.querySelector(`p${cssm("panelTitle")}`)?.textContent);
+      const level = parseIntSafe(card.querySelector(`span${cssm("levelValue")}`)?.textContent);
+      if (!Number.isFinite(level)) {
+        dwarn(t("warn_parse_level"), JSON.stringify(ocName));
+        continue;
+      }
+
+      // 仅 7/8 级 OC 显示收益
+      if (level !== 7 && level !== 8) {
+        dlog(t("log_skip_non_78"), JSON.stringify(ocName), "level =", level);
+        scoredCards.push({ el: card, score: -1, originalIndex: cardIndex });
+        continue;
+      }
+
+      // 统计同一个 OC 的空缺岗位数 n
+      const slotWrappers = getSlotWrappers(card);
+      let vacantCount = 0;
+      for (const w of slotWrappers) if (isSlotVacant(w)) vacantCount += 1;
+      dlog(t("log_oc_slot_stats"), JSON.stringify(ocName), "level =", level, "slots =", slotWrappers.length, "vacant =", vacantCount);
+      if (vacantCount <= 0) {
+        scoredCards.push({ el: card, score: -1, originalIndex: cardIndex });
+        continue;
+      }
+
+      const remainingDays = getOcRemainingDays(card, vacantCount);
+      let cardMaxScore = -1;
+
+      // 只对“岗位空缺”的岗位显示收益：总收益 = a * n；日均收益 = 总收益 / 剩余天数
+      for (const slotWrapper of slotWrappers) {
+        if (!isSlotVacant(slotWrapper)) continue;
+        const btn = slotWrapper.querySelector(`:scope > button${cssm("slotHeader")}`) ||
+                    slotWrapper.querySelector(`button${cssm("slotHeader")}`);
+        if (!btn) continue;
+
+        const role = normalizeRole(btn.querySelector(`span${cssm("title")}`)?.textContent);
+        const chance = parseIntSafe(btn.querySelector(`div${cssm("successChance")}`)?.textContent);
+        if (!Number.isFinite(chance)) {
+          dwarn(t("warn_parse_chance"), JSON.stringify(ocName), JSON.stringify(role));
+          continue;
+        }
+
+        const match = getXishuMatchResult(ocName, level, role, chance);
+        if (match.reason === "chance_too_low") {
+          badgeOps.push({ btn, text: t("warn_chance_too_low"), kind: "warn", profitValue: NaN, runId });
+          continue;
+        }
+        if (match.reason !== "ok" || !Number.isFinite(match.a)) {
+          dlog(t("log_xishu_no_hit"), { ocName, level, role, chance, vacantCount, reason: match.reason });
+          continue;
+        }
+
+        const totalProfit = match.a * vacantCount;
+        let score = totalProfit;
+        let text = t("badge_total", { value: formatProfitValue(totalProfit) });
+
+        if (currentMode === MODE_DAILY) {
+          // 解析不到剩余时间时，兜底仍按总收益（避免除 0/NaN 导致排序全乱）
+          if (Number.isFinite(remainingDays) && remainingDays > 0) score = totalProfit / remainingDays;
+          text = t("badge_daily", { value: formatProfitValue(score) });
+        }
+
+        cardMaxScore = Math.max(cardMaxScore, score);
+        dlog(t("log_write_profit"), { mode: currentMode, ocName, level, role, chance, a: match.a, vacantCount, remainingDays, totalProfit, score, text });
+        badgeOps.push({ btn, text, kind: "profit", profitValue: score, runId });
+      }
+
+      scoredCards.push({ el: card, score: cardMaxScore, originalIndex: cardIndex });
+    }
+
+    // ====== 集中写 DOM（并在此阶段抑制 observer） ======
+    isMutatingByScript = true;
+    try {
+      // 更新/插入 badge（尽量复用既有节点，避免 remove+insert）
+      for (const op of badgeOps) upsertBadge(op.btn, op);
+      // 清理本次没更新到的旧 badge（例如某岗位不再空缺/卡片被替换）
+      cleanupStaleBadges(ocArea, runId);
+      // 按“分数”做视觉排序（不移动节点）
+      applyCardOrderByScore(ocArea, scoredCards);
+      // 让高收益岗位更显眼（按当前页面最大分数做阈值）
+      applyProfitHighlights(ocArea);
+
+      // 高亮最高分卡片（只处理上一张和新一张，减少 class 抖动）
+      const top = scoredCards.filter((x) => Number.isFinite(x.score) && x.score > 0)
+        .sort((a, b) => b.score - a.score)[0]?.el || null;
+      if (lastTopCard && lastTopCard !== top) lastTopCard.classList.remove(CARD_TOP_CLASS);
+      if (top) top.classList.add(CARD_TOP_CLASS);
+      lastTopCard = top;
+    } finally {
+      isMutatingByScript = false;
+    }
+  }
+
+  function scheduleProcess() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      try {
+        processOnce();
+      } catch (e) {
+        // 油猴脚本里直接输出，便于定位页面结构变化
+        console.error("[daguofan][oc-profit]", t("err_process_failed"), e);
+      }
+    });
+  }
+
+  function setupObserver() {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+
+    const target = findOcArea() || getCrimesRoot();
+    if (!target) return false;
+
+    observer = new MutationObserver(() => {
+      if (!isMutatingByScript) scheduleProcess();
+    });
+    observer.observe(target, { childList: true, subtree: true });
+    return true;
+  }
+
+  function boot() {
+    currentMode = loadMode();
+    // 初次处理 + 监听后续变化
+    scheduleProcess();
+
+    // ocArea 可能延迟出现：先用 body 兜底观察，等 ocArea 出现再切换到精确观察
+    if (!setupObserver()) {
+      const tmp = new MutationObserver(() => {
+        if (setupObserver()) {
+          tmp.disconnect();
+          scheduleProcess();
+        }
+      });
+      tmp.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  // Torn 是 SPA：hash 变化时重跑
+  function bootEntry() {
+    // 有缓存立即显示；联网更新完成后自动重算，不让慢请求阻塞页面。
+    initializeXishu();
+    boot();
+    ensureXishuLoaded();
+  }
+
+  window.addEventListener("hashchange", () => bootEntry(), { passive: true });
+  bootEntry();
+})();
