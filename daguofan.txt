@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         daguofan - Torn OC 收益显示
 // @namespace    SMTH-CONCORD
-// @version      0.6.0
+// @version      0.7.0
 // @description  自动读取飞书岗位系数表，在 Torn Recruiting 栏位对 7/8 级 OC 的空缺岗位显示工分，支持帮派选择和总工分/日均工分模式。
 // @author       brbbswd[2727286]
-// @match        https://www.torn.com/factions.php*
+// @match        https://www.torn.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      smth-torncity.feishu.cn
@@ -398,8 +398,9 @@
     return false;
   }
 
-  // PC 端有 #faction-crimes-root；移动端没有则退回 body 以便后续搜索
-  const getCrimesRoot = () => document.getElementById("faction-crimes-root") || document.body;
+  // PC 端有 #faction-crimes-root；移动端/页面未渲染完时退回 body/documentElement，保证不为 null
+  const getCrimesRoot = () =>
+    document.getElementById("faction-crimes-root") || document.body || document.documentElement;
 
   function findOcArea() {
     const root = getCrimesRoot();
@@ -460,7 +461,7 @@
       /* 通用属性选择器（不限定 #faction-crimes-root），适配移动端 */
       [data-dgf-flex="1"]{ display:flex; flex-direction:column; }
     `;
-    document.head.appendChild(style);
+    document.head ? document.head.appendChild(style) : document.documentElement.appendChild(style);
   }
 
   function parseIntSafe(v) {
@@ -623,7 +624,7 @@
     });
     form.append(otherLabel, save, later);
     dialog.appendChild(form);
-    document.body.appendChild(dialog);
+    (document.body || document.documentElement).appendChild(dialog);
     try {
       dialog.showModal();
     } catch (e) {
@@ -881,6 +882,11 @@
       return;
     }
 
+    // 只有真正进入 OC 页面才联网更新系数（自带去重与30分钟节流）：
+    // @match 已放宽到整站（手机 PDA 只在整页加载时注入脚本，需要靠 SPA 跳转驻留），
+    // 不能在每个 Torn 页面上都请求飞书。
+    ensureXishuLoaded();
+
     const ocArea = findOcArea();
     if (!ocArea) {
       dwarn(t("warn_missing_oc_area"));
@@ -1028,44 +1034,26 @@
   }
 
   function setupObserver() {
-    if (observer) {
-      observer.disconnect();
-      observer = null;
-    }
-
-    const target = findOcArea() || getCrimesRoot();
-    if (!target) return false;
-
+    if (observer) observer.disconnect();
     observer = new MutationObserver(() => {
       if (!isMutatingByScript) scheduleProcess();
     });
-    observer.observe(target, { childList: true, subtree: true });
-    return true;
+    // ocArea 可能延迟出现（SPA 跳转/异步渲染）：先观察根节点，DOM 变化会反复触发 processOnce
+    observer.observe(findOcArea() || getCrimesRoot(), { childList: true, subtree: true });
   }
 
   function boot() {
     currentMode = loadMode();
     // 初次处理 + 监听后续变化
     scheduleProcess();
-
-    // ocArea 可能延迟出现：先用 body 兜底观察，等 ocArea 出现再切换到精确观察
-    if (!setupObserver()) {
-      const tmp = new MutationObserver(() => {
-        if (setupObserver()) {
-          tmp.disconnect();
-          scheduleProcess();
-        }
-      });
-      tmp.observe(document.body, { childList: true, subtree: true });
-    }
+    setupObserver();
   }
 
   // Torn 是 SPA：hash 变化时重跑
   function bootEntry() {
-    // 有缓存立即显示；联网更新完成后自动重算，不让慢请求阻塞页面。
+    // 只恢复本地状态并挂监听；联网更新系数等进入 OC 页面后再做（见 processOnce）。
     initializeXishu();
     boot();
-    ensureXishuLoaded();
   }
 
   window.addEventListener("hashchange", () => bootEntry(), { passive: true });
