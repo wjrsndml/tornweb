@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         daguofan - Torn OC 收益显示
 // @namespace    SMTH-CONCORD
-// @version      0.7.0
+// @version      0.7.1
 // @description  自动读取飞书岗位系数表，在 Torn Recruiting 栏位对 7/8 级 OC 的空缺岗位显示工分，支持帮派选择和总工分/日均工分模式。
 // @author       brbbswd[2727286]
 // @match        https://www.torn.com/*
@@ -14,7 +14,10 @@
 // @license MIT
 // ==/UserScript==
 
-(function () {
+(// 语法严格保持 ES2020（Chrome 80）：手机 Torn PDA 使用系统 WebView，国产ROM往往长期不更新，
+// 旧 WebView 遇到逻辑赋值等 ES2021+ 语法会整段解析失败，插件一个字符都不会执行，表现得像没装一样。
+// tests 里有源码扫描兜底，禁止引入 ES2021+ 语法和新接口。
+function () {
   "use strict";
 
   const T = {
@@ -274,12 +277,13 @@
         throw new Error(`飞书系数记录无效：${recordId}`);
       }
       for (const factionId of new Set(factionIds)) {
-        const byOc = tables[factionId] ||= Object.create(null);
-        const byLevel = byOc[ocName] ||= Object.create(null);
-        const byRole = byLevel[String(level)] ||= Object.create(null);
+        // 注意：不要用逻辑赋值等 ES2021+ 语法，手机 PDA 的 WebView 可能很旧（见文件头注释）
+        const byOc = tables[factionId] || (tables[factionId] = Object.create(null));
+        const byLevel = byOc[ocName] || (byOc[ocName] = Object.create(null));
+        const byRole = byLevel[String(level)] || (byLevel[String(level)] = Object.create(null));
         // 飞书是 (下限, 上限]，Torn 成功率为整数；转换成 [min, max)。
         // 例如飞书 (64, 65] -> [65, 66)，保证 65% 和 100% 都准确命中。
-        (byRole[role] ||= []).push([min + 1, max + 1, coeff]);
+        (byRole[role] || (byRole[role] = [])).push([min + 1, max + 1, coeff]);
       }
     }
     for (const table of Object.values(tables)) {
@@ -518,7 +522,9 @@
       const other = document.createElement("option");
       other.value = "other";
       other.textContent = t("faction_other");
-      select.replaceChildren(placeholder, ...ids.map((id) => {
+      // 不用 replaceChildren（Chrome 86+），兼容手机 PDA 的旧 WebView
+      select.textContent = "";
+      select.append(placeholder, ...ids.map((id) => {
         const option = document.createElement("option");
         option.value = id;
         option.textContent = factionNames[id] ? `${factionNames[id]} (${id})` : id;
