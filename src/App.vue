@@ -43,6 +43,10 @@
           <el-icon><Link /></el-icon>
           <span>Chain 查看器</span>
         </el-menu-item>
+        <el-menu-item index="chainsearch">
+          <el-icon><Search /></el-icon>
+          <span>Chain 历史搜索</span>
+        </el-menu-item>
         <el-menu-item index="comparison">
           <el-icon><DataAnalysis /></el-icon>
           <span>帮派实力对比</span>
@@ -325,6 +329,11 @@
       <div v-if="activeMenu === 'chains'" class="content-section">
         <ChainAnalyzer :api-key="globalApiKey" />
       </div>
+
+      <!-- Chain 历史搜索 -->
+      <div v-if="activeMenu === 'chainsearch'" class="content-section">
+        <ChainHistorySearcher :api-key="globalApiKey" />
+      </div>
       
       <!-- 帮派实力对比 -->
       <div v-if="activeMenu === 'comparison'" class="content-section">
@@ -376,9 +385,11 @@
 // - 2025-12-27: 增加“记住 API Key（localStorage）”与一键清除功能。
 // - 2025-12-27: 增加“帮派 OC 推荐”功能入口。
 // - 2025-12-27: 增加“页面记忆”功能：刷新/重开后自动恢复上一次选择的菜单。
+// - 2026-10-25: 增加“Chain 历史搜索”功能入口（按帮派 ID + 长度阈值回溯搜索历史 Chain）。
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import ChainAnalyzer from './components/ChainAnalyzer.vue'
+import ChainHistorySearcher from './components/ChainHistorySearcher.vue'
 import FactionComparison from './components/FactionComparison.vue'
 import TempWeaponStats from './components/TempWeaponStats.vue'
 import FactionOcStatus from './components/FactionOcStatus.vue'
@@ -387,7 +398,7 @@ import ForumThreadGrabber from './components/ForumThreadGrabber.vue'
 import UserForumPostsGrabber from './components/UserForumPostsGrabber.vue'
 import OcSimulator from './components/OcSimulator.vue'
 import OcAnalytics from './components/OcAnalytics.vue'
-import { Box, Operation, Link, DataAnalysis, Download, Document, User, DataLine, TrendCharts } from '@element-plus/icons-vue'
+import { Box, Operation, Link, DataAnalysis, Download, Document, User, DataLine, TrendCharts, Search } from '@element-plus/icons-vue'
 import {
   clearStoredApiKey,
   getRememberApiKeyEnabled,
@@ -404,6 +415,7 @@ const ALLOWED_MENUS = new Set([
   'split',
   'attacks',
   'chains',
+  'chainsearch',
   'comparison',
   'tempweapons',
   'oc',
